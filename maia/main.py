@@ -10,6 +10,7 @@ from pipecat.services.fish.tts import FishAudioTTSService
 from maia import config, services
 from maia.audio_out import ResampleOut
 from maia.brain import MaiaBrain, build_claude_options, make_voice_server
+from maia.clean import SpeechCleaner
 from maia.reflex import Reflex
 
 
@@ -48,6 +49,7 @@ async def main():
             transport.input(),
             services.build_stt(cfg),
             MaiaBrain(claude, reflex),
+            SpeechCleaner(),  # quita markdown (**, [ ]) y loguea [MAIA]
             services.build_tts(cfg),
             ResampleOut(),  # Fish 24k -> 48k antes del transport (fix del chipmunk)
             transport.output(),

@@ -8,6 +8,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from maia import config, services
 from maia.audio_out import ResampleOut
+from maia.clean import SpeechCleaner
 
 
 class EchoBrain(FrameProcessor):
@@ -29,6 +30,7 @@ async def main():
         transport.input(),
         services.build_stt(cfg),
         EchoBrain(),
+        SpeechCleaner(),
         services.build_tts(cfg),
         ResampleOut(),
         transport.output(),

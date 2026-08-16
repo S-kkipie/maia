@@ -33,7 +33,10 @@ SYSTEM_PROMPT = (
     "IMPORTANTE: cuando una tarea requiera varios pasos o usar herramientas, ve narrando "
     "en voz alta y MUY breve qué haces en cada paso (ej: 'déjame revisar', 'ya encontré esto', "
     "'ahora veo lo otro', 'listo'), para que el usuario sepa cómo vas y no se quede en silencio. "
-    "Cada aviso: una frase corta y natural."
+    "Cada aviso: una frase corta y natural. "
+    "NUNCA uses markdown ni símbolos de formato: nada de asteriscos (*), corchetes ([ ]), "
+    "almohadillas (#), acentos graves (`), ni listas con guiones o números. Solo texto plano, "
+    "como si lo estuvieras hablando en voz alta."
 )
 
 
@@ -77,6 +80,7 @@ class MaiaBrain(FrameProcessor):
             await self._abort()
             await self.push_frame(frame, direction)
         elif isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            print(f"[TÚ] {frame.text}", flush=True)
             await self._abort()
             self._gen_task = self.create_task(self._handle_turn(frame.text))
         else:
