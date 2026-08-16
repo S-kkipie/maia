@@ -60,6 +60,8 @@ class Config:
     wake_ppn: str | None
     gemini_key: str | None
     reflex_model: str
+    stt_engine: str      # 'auto' (AssemblyAI + fallback whisper) | 'assemblyai' | 'whisper'
+    whisper_model: str   # modelo ggml: base | small | medium ...
 
 
 def load() -> Config:
@@ -73,6 +75,8 @@ def load() -> Config:
         wake_ppn=os.getenv("MAIA_WAKE_PPN") or None,
         gemini_key=os.getenv("GEMINI_API_KEY") or None,
         reflex_model=os.getenv("MAIA_REFLEX_MODEL") or "gemini-2.5-flash-lite",
+        stt_engine=(os.getenv("MAIA_STT") or "auto").strip().lower(),
+        whisper_model=os.getenv("MAIA_WHISPER_MODEL") or "base",
     )
 
 

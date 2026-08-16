@@ -1,7 +1,11 @@
+from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.services.assemblyai.stt import AssemblyAISTTService
 from pipecat.services.fish.tts import FishAudioTTSService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
+
+from maia.vad import Silero16k
+from maia.whisper_stt import WhisperCppSTT
 
 IN_SR = 48000    # mic WASAPI nativo (AssemblyAI a 48k)
 OUT_SR = 48000   # speaker Realtek nativo (solo acepta 48000 con índice explícito)
@@ -32,6 +36,20 @@ def build_stt(cfg) -> AssemblyAISTTService:
             format_turns=True,
             keyterms_prompt=["Maia"],
         ),
+    )
+
+
+def build_vad() -> VADProcessor:
+    """VAD local (Silero) que segmenta el habla para whisper.cpp. Corre a 48k->16k."""
+    return VADProcessor(vad_analyzer=Silero16k(input_rate=IN_SR))
+
+
+def build_whisper(cfg) -> WhisperCppSTT:
+    """STT local whisper.cpp. En 'auto' arranca en standby; en 'whisper' se activa."""
+    return WhisperCppSTT(
+        model_name=cfg.whisper_model,
+        models_dir="models/whisper",
+        language=Language.ES,
     )
 
 

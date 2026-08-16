@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 
 from claude_agent_sdk import ClaudeSDKClient, ResultMessage
@@ -18,6 +19,35 @@ from maia.brain import (
 )
 from maia.clean import SpeechCleaner
 from maia.reflex import Reflex
+from maia.stt_fallback import STTFallbackGate, TagAAI
+
+
+def build_stt_stages(cfg):
+    """Devuelve la lista de procesadores STT según cfg.stt_engine.
+
+    - 'assemblyai': sólo AssemblyAI (nube), sin VAD ni whisper.
+    - 'whisper':    sólo whisper.cpp local (con VAD), activo desde el arranque.
+    - 'auto':       AssemblyAI + whisper.cpp en standby + gate que cae a whisper si falla.
+    """
+    engine = cfg.stt_engine
+    if engine == "assemblyai":
+        print("[STT] Motor: AssemblyAI (nube, sin fallback)", flush=True)
+        return [services.build_stt(cfg)]
+    if engine == "whisper":
+        print(f"[STT] Motor: whisper.cpp local ({cfg.whisper_model}, sin nube)", flush=True)
+        whisper = services.build_whisper(cfg)
+        whisper.active = True
+        return [services.build_vad(), whisper]
+    # auto (default)
+    print(f"[STT] Motor: auto — AssemblyAI + fallback whisper.cpp ({cfg.whisper_model})", flush=True)
+    whisper = services.build_whisper(cfg)
+    return [
+        services.build_stt(cfg),
+        TagAAI(),
+        services.build_vad(),
+        whisper,
+        STTFallbackGate(whisper),
+    ]
 
 
 async def _warmup(claude: ClaudeSDKClient):
@@ -28,8 +58,10 @@ async def _warmup(claude: ClaudeSDKClient):
             break
 
 
-async def main():
+async def main(stt_engine: str | None = None):
     cfg = config.load()
+    if stt_engine:
+        cfg.stt_engine = stt_engine
     transport = services.build_transport(cfg)
     reflex = Reflex(cfg.gemini_key, cfg.reflex_model) if cfg.gemini_key else None
 
@@ -65,7 +97,7 @@ async def main():
         await _warmup(claude)
         pipeline = Pipeline([
             transport.input(),
-            services.build_stt(cfg),
+            *build_stt_stages(cfg),
             MaiaBrain(claude, reflex),
             SpeechCleaner(),  # quita markdown (**, [ ]) y loguea [MAIA]
             services.build_tts(cfg),
@@ -80,4 +112,13 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Maia — asistente de voz")
+    parser.add_argument(
+        "--stt",
+        choices=["auto", "assemblyai", "whisper"],
+        default=None,
+        help="Motor STT: auto (default, AssemblyAI + fallback whisper), "
+             "assemblyai (sólo nube), whisper (sólo local). Override de MAIA_STT.",
+    )
+    args = parser.parse_args()
+    asyncio.run(main(args.stt))
