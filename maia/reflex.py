@@ -60,6 +60,26 @@ class Reflex:
         except Exception:
             return "Sigo en ello."
 
+    async def progress_update(self, user_text: str, claude_so_far: str) -> str:
+        """Aviso de progreso basado en lo que Claude lleva hecho (no genérico)."""
+        if not claude_so_far.strip():
+            return await self.heartbeat_phrase(user_text)
+        try:
+            r = await self._client.aio.models.generate_content(
+                model=self._model,
+                contents=(
+                    f'Eres Maia, asistente de voz en español, cálida. El usuario pidió: "{user_text}". '
+                    "Estás trabajando y AÚN no terminas. Esto es tu progreso REAL hasta ahora "
+                    f"(lo que has visto/hecho):\n---\n{claude_so_far[-1500:]}\n---\n"
+                    "Da UNA sola frase MUY corta y natural avisando cómo vas, BASADA en ese progreso real "
+                    "(menciona brevemente lo último que viste o hiciste). Varía, no repitas 'un momento' "
+                    "genérico. Solo la frase, sin comillas."
+                ),
+            )
+            return (r.text or "").strip().strip('"') or "Sigo en ello."
+        except Exception:
+            return "Sigo en ello."
+
     async def full_answer(self, user_text: str) -> str:
         """Respuesta completa por Gemini (fallback si Claude no está disponible)."""
         try:

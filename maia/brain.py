@@ -152,9 +152,10 @@ class MaiaBrain(FrameProcessor):
             await self._run_claude(user_text)
 
     async def _run_claude(self, user_text: str):
-        # Recolecta la respuesta completa de Claude (con heartbeat para no dejar silencio),
+        # Recolecta la respuesta completa de Claude (con heartbeat basado en su progreso real),
         # luego Gemini la humaniza (corta, sin URLs/markdown/siglas) y la hablamos.
         done = {"v": False}
+        progress = {"buf": ""}  # progreso parcial de Claude, para avisos contextuales
 
         async def heartbeat():
             try:
@@ -163,7 +164,7 @@ class MaiaBrain(FrameProcessor):
                     if done["v"]:
                         break
                     phrase = (
-                        await self._reflex.heartbeat_phrase(user_text)
+                        await self._reflex.progress_update(user_text, progress["buf"])
                         if self._reflex is not None
                         else "Sigo en ello."
                     )
@@ -182,6 +183,7 @@ class MaiaBrain(FrameProcessor):
                 delta = _delta_text(message)
                 if delta:
                     buf += delta
+                    progress["buf"] = buf  # expone el progreso al heartbeat
                     pending += delta
                     idx = match_endofsentence(pending)
                     while idx:
