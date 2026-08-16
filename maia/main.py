@@ -10,7 +10,7 @@ from pipecat.services.fish.tts import FishAudioTTSService
 
 import pathlib
 
-from maia import config, mcps, services
+from maia import config, mcps, memory, services
 from maia.audio_out import ResampleOut
 from maia.brain import (
     MaiaBrain,
@@ -89,14 +89,19 @@ async def main(stt_engine: str | None = None):
         "timers": timer_server,
         "config": make_config_server(),
         "pc": make_computer_server(),  # computer use: ojos + manos en el escritorio
+        "memoria": memory.make_memory_server(),  # memoria persistente entre sesiones
         **mcps.load_registry(),
     }
+    mem = memory.load_memory()
+    if mem:
+        print(f"[MEMORIA] {len(mem.splitlines())} nota(s) cargada(s).", flush=True)
     plugin_dir = pathlib.Path(__file__).resolve().parents[1] / "maia_plugin"
     options = build_claude_options(
         mcp_servers=servers,
         allowed_tools=mcps.allowed_tools_for(servers.keys()),
         plugins=[{"type": "local", "path": str(plugin_dir)}],  # skill computer-use
         enable_skills=True,
+        memory=mem,  # se inyecta en el system prompt (siempre en contexto)
     )
 
     async with ClaudeSDKClient(options=options) as claude:

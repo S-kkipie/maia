@@ -47,6 +47,24 @@ SYSTEM_PROMPT = (
     "(7) antes de acciones peligrosas (borrar, pagar, enviar) confirma con el usuario."
 )
 
+MEMORY_INSTRUCTION = (
+    "TIENES MEMORIA PERSISTENTE entre conversaciones: cuando el usuario te diga algo "
+    "importante sobre él (preferencias, nombres, gustos, rutinas, decisiones, datos que "
+    "querrá que recuerdes), guárdalo con 'recordar'. No preguntes si quiere que lo recuerde; "
+    "si es útil, hazlo. Puedes revisarla con 'ver_memoria' y borrar con 'olvidar'."
+)
+
+
+def system_prompt_with_memory(memory: str = "") -> str:
+    """System prompt base + la memoria persistente cargada (si hay) + la instrucción."""
+    prompt = SYSTEM_PROMPT
+    if memory.strip():
+        prompt += ("\n\nMEMORIA (lo que ya sabes del usuario de conversaciones pasadas; "
+                   "úsalo con naturalidad, no lo recites):\n" + memory.strip())
+    prompt += "\n\n" + MEMORY_INSTRUCTION
+    return prompt
+
+
 HEARTBEAT_EVERY = 5.0  # s: aviso de progreso (dinámico, generado por Gemini) si Claude tarda
 
 
@@ -346,12 +364,12 @@ class MaiaBrain(FrameProcessor):
 
 
 def build_claude_options(mcp_servers=None, allowed_tools=None, plugins=None,
-                         enable_skills=False) -> ClaudeAgentOptions:
+                         enable_skills=False, memory="") -> ClaudeAgentOptions:
     kwargs = dict(
         model="claude-haiku-4-5-20251001",
         include_partial_messages=True,
         permission_mode="bypassPermissions",
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt_with_memory(memory),
         strict_mcp_config=True,   # SOLO nuestros mcp_servers; ignora connectors claude.ai + config global
         setting_sources=[],       # modo aislado: no hereda ~/.claude ni proyecto
         max_buffer_size=20 * 1024 * 1024,  # headroom: capturas/salidas grandes no revientan el lector (default 1MB)
