@@ -70,6 +70,7 @@ async def main(stt_engine: str | None = None, brain: str | None = None, ui_on: b
     if ui_on:
         await ui.start_server()
         await ui.emit("meta", brain=cfg.brain_model, stt=cfg.stt_engine)
+        ui.open_ui()  # abre la pestaña; se reconecta sola mientras el pipeline calienta
     transport = services.build_transport(cfg)
     reflex = Reflex(cfg.gemini_key, cfg.reflex_model) if cfg.gemini_key else None
 
@@ -147,17 +148,10 @@ if __name__ == "__main__":
              "Override de MAIA_BRAIN.",
     )
     parser.add_argument("--ui", action="store_true",
-                        help="Abre la ventana (UI ligera con transcripciones y salida de Claude).")
+                        help="Abre la UI (pestaña con transcripciones y salida de Claude en vivo).")
     args = parser.parse_args()
     if args.ui:
-        # El pipeline corre en un hilo; pywebview necesita el hilo principal.
-        import threading
-
         ui.enable()
-        threading.Thread(
-            target=lambda: asyncio.run(main(args.stt, args.brain, ui_on=True)),
-            daemon=True,
-        ).start()
-        ui.run_window()  # bloquea hasta que cierres la ventana
-    else:
-        asyncio.run(main(args.stt, args.brain))
+    # El pipeline SIEMPRE en el hilo principal (Windows exige el hilo principal para
+    # lanzar el subproceso del CLI de Claude). La UI es una pestaña que se conecta por WS.
+    asyncio.run(main(args.stt, args.brain, ui_on=args.ui))

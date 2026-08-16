@@ -61,11 +61,14 @@ async def emit(kind: str, **fields) -> None:
             _clients.discard(ws)
 
 
-def run_window() -> None:
-    """Abre la ventana (bloquea el hilo principal). Requiere pywebview + WebView2."""
-    import webview
+def open_ui() -> None:
+    """Abre la página en el navegador (se conecta al WebSocket para los eventos).
 
-    html = (pathlib.Path(__file__).parent / "ui" / "index.html").read_text(encoding="utf-8")
-    webview.create_window("Maia", html=html, width=1120, height=740,
-                          background_color="#0e1016", min_size=(820, 560))
-    webview.start()
+    Navegador y no ventana Electron/pywebview a propósito: así el pipeline (audio +
+    el subproceso del CLI de Claude) se queda en el HILO PRINCIPAL, único lugar donde
+    asyncio puede lanzar subprocesos en Windows. La página pesa lo de una pestaña.
+    """
+    import webbrowser
+
+    page = pathlib.Path(__file__).parent / "ui" / "index.html"
+    webbrowser.open(page.as_uri())
