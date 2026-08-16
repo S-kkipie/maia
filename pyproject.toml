@@ -9,7 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "claude-agent-sdk>=0.2.139",
-    "pipecat-ai[assemblyai,elevenlabs,local,silero]==1.7.0",
+    "pipecat-ai[assemblyai,elevenlabs,fish,local,silero]==1.7.0",
     "python-dotenv>=1.2.2",
 ]
 

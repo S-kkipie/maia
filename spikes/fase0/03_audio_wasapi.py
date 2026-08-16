@@ -37,8 +37,8 @@ async def main():
         LocalAudioTransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            audio_in_sample_rate=16000,
-            audio_out_sample_rate=16000,
+            audio_in_sample_rate=48000,
+            audio_out_sample_rate=48000,
             input_device_index=in_idx,
             output_device_index=out_idx,
         )

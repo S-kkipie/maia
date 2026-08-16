@@ -51,7 +51,7 @@ def wasapi_in():
 async def main():
     stt = AssemblyAISTTService(
         api_key=API_KEY,
-        sample_rate=16000,
+        sample_rate=48000,
         vad_force_turn_endpoint=False,  # AssemblyAI maneja turnos (U3 Pro)
         settings=AssemblyAISTTService.Settings(
             model="universal-3-5-pro",
@@ -63,7 +63,7 @@ async def main():
     transport = LocalAudioTransport(
         LocalAudioTransportParams(
             audio_in_enabled=True,
-            audio_in_sample_rate=16000,
+            audio_in_sample_rate=48000,
             input_device_index=wasapi_in(),
         )
     )

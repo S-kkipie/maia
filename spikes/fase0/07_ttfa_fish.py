@@ -1,3 +1,4 @@
+"""TTFA con Fish Audio (modelo gratis s2.1-pro-free) para comparar contra ElevenLabs (05)."""
 import asyncio
 import os
 import pathlib
@@ -8,8 +9,8 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from _env import require  # noqa: E402
 
-require("ELEVENLABS_API_KEY")
-VOICE_ID = require("ELEVENLABS_VOICE_ID")
+require("FISHAUDIO_API_KEY")
+REFERENCE_ID = os.getenv("FISHAUDIO_REFERENCE_ID") or None  # voz espanola (opcional)
 
 from claude_agent_sdk import (  # noqa: E402
     ClaudeAgentOptions,
@@ -28,13 +29,13 @@ from pipecat.pipeline.pipeline import Pipeline  # noqa: E402
 from pipecat.pipeline.runner import PipelineRunner  # noqa: E402
 from pipecat.pipeline.task import PipelineParams, PipelineTask  # noqa: E402
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor  # noqa: E402
-from pipecat.services.elevenlabs.tts import ElevenLabsTTSService  # noqa: E402
+from pipecat.services.fish.tts import FishAudioTTSService  # noqa: E402
 from pipecat.transports.local.audio import (  # noqa: E402
     LocalAudioTransport,
     LocalAudioTransportParams,
 )
 
-SR = 48000  # rate nativo WASAPI (16000 falla con device index WASAPI: Errno -9997)
+SR = 48000  # rate nativo WASAPI
 state = {"t0": None, "first_audio": None}
 
 
@@ -83,10 +84,14 @@ async def brain_stream(client, task, prompt):
 
 
 async def main():
-    tts = ElevenLabsTTSService(
-        api_key=os.getenv("ELEVENLABS_API_KEY"),
+    tts = FishAudioTTSService(
+        api_key=os.getenv("FISHAUDIO_API_KEY"),
         sample_rate=SR,
-        settings=ElevenLabsTTSService.Settings(voice=VOICE_ID, model="eleven_flash_v2_5"),
+        settings=FishAudioTTSService.Settings(
+            model="s2.1-pro-free",  # se envia como header WS -> tier gratis
+            voice=REFERENCE_ID,     # reference_id de una voz espanola (o None = default)
+            latency="balanced",
+        ),
     )
     transport = LocalAudioTransport(
         LocalAudioTransportParams(audio_out_enabled=True, audio_out_sample_rate=SR)
@@ -100,15 +105,13 @@ async def main():
             model="claude-haiku-4-5-20251001", include_partial_messages=True
         )
         async with ClaudeSDKClient(options=opts) as client:
-            # Warmup: un turno para eliminar el cold-start del SDK (mide el cliente WARM,
-            # que es el camino real del diseno: cliente persistente).
+            # Warmup: elimina el cold-start del SDK (mide cliente WARM persistente).
             await client.query("Responde solo con la palabra: listo.")
             await drain(client)
-            # Medicion real (cliente warm)
             await brain_stream(
                 client, task, "En una sola frase corta y natural, saludame como asistente de voz."
             )
-        await asyncio.sleep(4)  # dejar sonar el audio
+        await asyncio.sleep(4)
         await task.queue_frame(EndFrame())
 
     await asyncio.gather(runner.run(task), drive())
