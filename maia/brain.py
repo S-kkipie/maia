@@ -364,9 +364,9 @@ class MaiaBrain(FrameProcessor):
 
 
 def build_claude_options(mcp_servers=None, allowed_tools=None, plugins=None,
-                         enable_skills=False, memory="") -> ClaudeAgentOptions:
+                         enable_skills=False, memory="", model="sonnet") -> ClaudeAgentOptions:
     kwargs = dict(
-        model="claude-haiku-4-5-20251001",
+        model=model,  # 'haiku'|'sonnet'|'opus' (el CLI resuelve el alias a la versión actual)
         include_partial_messages=True,
         permission_mode="bypassPermissions",
         system_prompt=system_prompt_with_memory(memory),

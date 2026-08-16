@@ -61,10 +61,12 @@ async def _warmup(claude: ClaudeSDKClient):
             break
 
 
-async def main(stt_engine: str | None = None):
+async def main(stt_engine: str | None = None, brain: str | None = None):
     cfg = config.load()
     if stt_engine:
         cfg.stt_engine = stt_engine
+    if brain:
+        cfg.brain_model = brain
     transport = services.build_transport(cfg)
     reflex = Reflex(cfg.gemini_key, cfg.reflex_model) if cfg.gemini_key else None
 
@@ -96,12 +98,14 @@ async def main(stt_engine: str | None = None):
     if mem:
         print(f"[MEMORIA] {len(mem.splitlines())} nota(s) cargada(s).", flush=True)
     plugin_dir = pathlib.Path(__file__).resolve().parents[1] / "maia_plugin"
+    print(f"[CEREBRO] Claude {cfg.brain_model}", flush=True)
     options = build_claude_options(
         mcp_servers=servers,
         allowed_tools=mcps.allowed_tools_for(servers.keys()),
         plugins=[{"type": "local", "path": str(plugin_dir)}],  # skill computer-use
         enable_skills=True,
         memory=mem,  # se inyecta en el system prompt (siempre en contexto)
+        model=cfg.brain_model,
     )
 
     async with ClaudeSDKClient(options=options) as claude:
@@ -132,5 +136,12 @@ if __name__ == "__main__":
         help="Motor STT: auto (default, AssemblyAI + fallback whisper), "
              "assemblyai (sólo nube), whisper (sólo local). Override de MAIA_STT.",
     )
+    parser.add_argument(
+        "--brain",
+        choices=["haiku", "sonnet", "opus"],
+        default=None,
+        help="Cerebro Claude: sonnet (default), haiku (rápido/simple), opus (máximo). "
+             "Override de MAIA_BRAIN.",
+    )
     args = parser.parse_args()
-    asyncio.run(main(args.stt))
+    asyncio.run(main(args.stt, args.brain))
