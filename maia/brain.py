@@ -111,6 +111,8 @@ def build_claude_options(mcp_servers=None, allowed_tools=None) -> ClaudeAgentOpt
         include_partial_messages=True,
         permission_mode="bypassPermissions",
         system_prompt=SYSTEM_PROMPT,
+        strict_mcp_config=True,   # SOLO nuestros mcp_servers; ignora connectors claude.ai + config global
+        setting_sources=[],       # modo aislado: no hereda ~/.claude ni proyecto
     )
     if mcp_servers:
         kwargs["mcp_servers"] = mcp_servers
