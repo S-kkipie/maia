@@ -94,6 +94,39 @@ class Reflex:
         except Exception:
             return "Perdona, ahora mismo no puedo responder."
 
+    async def on_interruption(self, user_text: str, progress: str) -> tuple[str, bool]:
+        """Usuario interrumpió una tarea en curso. Devuelve (respuesta, tomar_control).
+
+        tomar_control=False -> era charla/backchannel/pregunta corta: contesta breve y la
+        tarea SIGUE. tomar_control=True -> instrucción nueva, cambio o 'para/cancela':
+        se abandona la tarea y se atiende lo nuevo.
+        """
+        try:
+            r = await self._client.aio.models.generate_content(
+                model=self._model,
+                contents=(
+                    PERSONA
+                    + f'\n\nEstabas trabajando en una tarea y el usuario te interrumpió diciendo: '
+                    f'"{user_text}".\n'
+                    f"Progreso actual de la tarea (por si pregunta):\n{progress[-800:]}\n\n"
+                    "Decide:\n"
+                    "- Si es relleno/backchannel ('oye', 'ajá', 'espérate', 'sigue'), o una "
+                    "pregunta corta que puedes contestar SIN abandonar la tarea (p.ej. '¿cuánto "
+                    "falta?', '¿qué haces?'): responde UNA frase corta y termina con [SEGUIR].\n"
+                    "- Si es una instrucción NUEVA, un cambio de rumbo, o te pide PARAR/CANCELAR "
+                    "('mejor busca…', 'cancela', 'para', 'olvídalo', 'en vez de eso…'): responde "
+                    "solo un relleno corto ('Va.', 'Ok, cambio.') y termina con [TOMAR].\n"
+                    "Si NO suena a instrucción nueva ni a parar, prefiere [SEGUIR] (no abandones "
+                    "la tarea por una interjección). Solo la frase, sin comillas."
+                ),
+            )
+            txt = (r.text or "").strip()
+        except Exception:
+            return ("", True)  # ante fallo, comportamiento seguro: toma el control
+        takeover = "[TOMAR]" in txt.upper()
+        reply = txt.replace("[TOMAR]", "").replace("[SEGUIR]", "").replace("[seguir]", "").strip()
+        return (reply, takeover)
+
     async def speak_result(self, user_text: str, claude_text: str, activity: str) -> str:
         """Narra el RESULTADO de un turno agéntico interpretando texto + acciones de tools.
 
@@ -110,12 +143,16 @@ class Reflex:
                     "que ejecutaste con sus resultados (en orden). Las capturas de pantalla se "
                     "marcan como '(captura de pantalla)'.\n---\n"
                     f"{activity[-3500:]}\n---\n"
-                    f'Texto final que redactaste (puede estar vacío o incompleto): "{claude_text[-800:]}"\n\n'
-                    "Dile al usuario, HABLANDO en español, en 1 a 3 frases cortas, el RESULTADO: "
-                    "qué hiciste y qué encontraste o pasó. Si completaste la acción, dilo natural "
-                    "('Listo, ya…', 'Hecho', 'Encontré…'). Si el texto final ya lo resume, básate "
-                    "en él. Usa SOLO lo que aparece arriba, no inventes. Sin markdown, sin URLs, "
-                    "sin deletrear siglas. Solo la respuesta hablada."
+                    f'Texto final que redactaste (puede estar vacío o incompleto): "{claude_text[-1500:]}"\n\n'
+                    "Dile al usuario el RESULTADO, HABLANDO en español natural. Reglas:\n"
+                    "- Si pidió INFORMACIÓN (noticias, resumen, lista, explicación, datos): DILE lo "
+                    "esencial del CONTENIDO —los puntos clave, hablado—, NO solo que lo encontraste. "
+                    "'Encontré 10 noticias' a secas está MAL; menciona las principales. Puedes usar "
+                    "hasta ~6 frases si el contenido lo amerita, pero al grano.\n"
+                    "- Si fue una ACCIÓN (abrir, enviar, configurar): di breve que la hiciste y cómo "
+                    "quedó ('Listo, ya…', 'Hecho').\n"
+                    "Usa SOLO lo que aparece arriba, no inventes. Sin markdown, sin URLs, sin "
+                    "deletrear siglas. Solo la respuesta hablada."
                 ),
             )
             txt = (r.text or "").strip()

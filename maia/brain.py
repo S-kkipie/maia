@@ -1,4 +1,7 @@
 import asyncio
+import re
+import time
+import unicodedata
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -155,6 +158,17 @@ def _short(value, n: int = 160) -> str:
     return s if len(s) <= n else s[:n] + "..."
 
 
+def _norm_words(s: str) -> list[str]:
+    """Palabras normalizadas (sin acentos ni puntuación) para comparar eco."""
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+    s = re.sub(r"[^a-z0-9 ]", " ", s.lower())
+    return [w for w in s.split() if w]
+
+
+ECHO_WINDOW = 12.0  # s: ventana para considerar una transcripción como eco de Maia
+ECHO_OVERLAP = 0.6  # fracción de palabras compartidas para tratarlo como eco
+
+
 def _log_tools(message) -> None:
     """Muestra en consola qué herramientas ejecuta Claude y sus resultados."""
     if isinstance(message, AssistantMessage):
@@ -217,20 +231,71 @@ class MaiaBrain(FrameProcessor):
         self._claude = claude
         self._reflex = reflex  # capa Gemini rápida; si None, todo va a Claude
         self._gen_task = None
+        self._side_task = None         # clasificación de interrupción mientras Claude corre
         self._claude_running = False   # True mientras Claude procesa un turno
         self._interrupt_task = None    # interrupt() en 2do plano (nunca bloquea el pipeline)
+        self._recent_said = []         # [(texto, t)] de lo que Maia habló, para filtrar eco
+        self._progress_log = ""        # traza del turno actual, para clasificar interrupciones
+
+    async def _say(self, text: str):
+        """Habla y registra lo dicho (para no confundir el eco con voz del usuario)."""
+        t = text.strip()
+        if not t:
+            return
+        self._recent_said.append((t, time.monotonic()))
+        self._recent_said = self._recent_said[-8:]
+        await self.push_frame(TTSSpeakFrame(t))
+
+    def _is_echo(self, text: str) -> bool:
+        """True si la transcripción es en realidad Maia oyéndose a sí misma (eco)."""
+        words = set(_norm_words(text))
+        if len(words) < 3:  # muy corto (p.ej. 'oye'): puede ser backchannel real, no lo filtres
+            return False
+        now = time.monotonic()
+        for said, ts in reversed(self._recent_said):
+            if now - ts > ECHO_WINDOW:
+                continue
+            sw = set(_norm_words(said))
+            if sw and len(words & sw) / len(words) >= ECHO_OVERLAP:
+                return True
+        return False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, InterruptionFrame):
-            await self._abort()
+            # Deja que el pipeline corte el TTS, pero NO mates la tarea de Claude aquí:
+            # esperamos a saber QUÉ dijo el usuario para decidir (ver TranscriptionFrame).
             await self.push_frame(frame, direction)
         elif isinstance(frame, TranscriptionFrame) and frame.text.strip():
-            print(f"[TÚ] {frame.text}", flush=True)
-            await self._abort()
-            self._gen_task = self.create_task(self._handle_turn(frame.text))
+            text = frame.text.strip()
+            if self._is_echo(text):
+                print(f"[ECO] ignorado (Maia se oyó a sí misma): {text}", flush=True)
+                return
+            print(f"[TÚ] {text}", flush=True)
+            if self._claude_running:
+                # Maia está en una tarea: decide si es charla (sigue) o instrucción (toma).
+                self._side_task = self.create_task(self._handle_interruption(text))
+            else:
+                await self._abort()
+                self._gen_task = self.create_task(self._handle_turn(text))
         else:
             await self.push_frame(frame, direction)
+
+    async def _handle_interruption(self, text: str):
+        """Usuario habló mientras Claude trabajaba: ¿seguir la tarea o tomar el control?"""
+        if self._reflex is None:
+            await self._abort()
+            self._gen_task = self.create_task(self._handle_turn(text))
+            return
+        keep_reply, takeover = await self._reflex.on_interruption(text, self._progress_log)
+        if takeover:
+            print("[BARGE-IN] instrucción nueva -> tomo el control", flush=True)
+            await self._abort()
+            self._gen_task = self.create_task(self._handle_turn(text))
+        else:
+            print("[BARGE-IN] charla/backchannel -> sigo la tarea", flush=True)
+            if keep_reply.strip():
+                await self._say(keep_reply)
 
     async def _abort(self):
         was_running = self._claude_running
@@ -260,7 +325,7 @@ class MaiaBrain(FrameProcessor):
             # Reflejo instantáneo (~0.5s): responde directo o da un relleno + delega.
             reply, needs_claude = await self._reflex.respond(user_text)
             if reply.strip():
-                await self.push_frame(TTSSpeakFrame(reply))
+                await self._say(reply)
         if needs_claude:
             await self._run_claude(user_text)
 
@@ -283,7 +348,7 @@ class MaiaBrain(FrameProcessor):
                         else "Sigo en ello."
                     )
                     if not done["v"]:
-                        await self.push_frame(TTSSpeakFrame(phrase))
+                        await self._say(phrase)
             except asyncio.CancelledError:
                 pass
 
@@ -319,6 +384,7 @@ class MaiaBrain(FrameProcessor):
                         pending = pending[idx:]
                         idx = match_endofsentence(pending)
                 progress["log"] = "\n".join(activity)  # expone texto+tools al heartbeat
+                self._progress_log = progress["log"]   # para clasificar interrupciones
                 if isinstance(message, ResultMessage):
                     break
         except asyncio.CancelledError:
@@ -351,16 +417,17 @@ class MaiaBrain(FrameProcessor):
                 spoken = await self._reflex.speak_result(user_text, raw, trace)
             else:
                 spoken = raw or "Listo."
+        self._progress_log = ""
         rest = spoken
         idx = match_endofsentence(rest)
         while idx:
             frag = rest[:idx].strip()
             if frag:
-                await self.push_frame(TTSSpeakFrame(frag))
+                await self._say(frag)
             rest = rest[idx:]
             idx = match_endofsentence(rest)
         if rest.strip():
-            await self.push_frame(TTSSpeakFrame(rest.strip()))
+            await self._say(rest.strip())
 
 
 def build_claude_options(mcp_servers=None, allowed_tools=None, plugins=None,
