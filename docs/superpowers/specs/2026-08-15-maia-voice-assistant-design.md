@@ -1,4 +1,4 @@
-# Jarvis — Voice Assistant Harness
+# Maia — Voice Assistant Harness
 
 **Fecha:** 2026-08-15
 **Estado:** Diseño aprobado, pendiente de plan de implementación
@@ -6,7 +6,7 @@
 
 ## 1. Objetivo
 
-Asistente de IA por voz ("Jarvis") que se sienta como un asistente inteligente real capaz de
+Asistente de IA por voz ("Maia") que se sienta como un asistente inteligente real capaz de
 ayudar a manejar la vida/trabajo del usuario. Habla y entiende **español nativo**. El cerebro es
 **el harness completo de Claude Code** (no una app recortada), con acceso a shell/OS, web, y
 servicios personales vía tool calling + MCP. Autentica con la **suscripción Claude Pro Max**
@@ -50,10 +50,10 @@ si algún día se requiere GUI-clicking, entra un MCP de comunidad como fase apa
 ## 4. Arquitectura
 
 ```
-┌─ proceso jarvis (Windows nativo, Python asyncio) ──────────┐
+┌─ proceso maia (Windows nativo, Python asyncio) ──────────┐
 │                                                            │
 │  módulo voice (Pipecat pipeline)                           │
-│    mic → wake word "Jarvis" → VAD/turn detection           │
+│    mic → wake word "Maia" → VAD/turn detection           │
 │        → Deepgram Flux (STT, español)                      │
 │    spk ← ElevenLabs Flash (TTS, español)                   │
 │    barge-in / endpointing: nativos del framework           │
@@ -74,7 +74,7 @@ tool vía `ClaudeSDKClient`. `brain` no importa audio → se testea con transcri
 
 ## 5. Flujo de un turno
 
-1. Usuario dice "Jarvis" → wake word activa la escucha.
+1. Usuario dice "Maia" → wake word activa la escucha.
 2. Usuario habla → Deepgram transcribe en streaming; VAD/turn detection marca fin de turno.
 3. `brain` inyecta el texto en el `ClaudeSDKClient` persistente.
 4. Apenas Claude decide usar una tool, `brain` emite un **relleno hablado** ("dame un segundo,
