@@ -2,126 +2,141 @@
 
 **Fecha:** 2026-08-15
 **Estado:** Diseño aprobado, pendiente de plan de implementación
+**Plataforma objetivo:** Windows nativo
 
 ## 1. Objetivo
 
 Asistente de IA por voz ("Jarvis") que se sienta como un asistente inteligente real capaz de
-ayudar a manejar la vida/trabajo del usuario. Habla y entiende **español nativo**. Usa
-**tool calling** vía MCP para operar sobre servicios reales (calendario, email, etc.). El
-cerebro es Claude, autenticado con la suscripción **Claude Pro Max** existente. La prioridad
-número uno es la **experiencia de usuario**: baja latencia percibida, interrupción natural, y
-seguridad ante acciones destructivas.
+ayudar a manejar la vida/trabajo del usuario. Habla y entiende **español nativo**. El cerebro es
+**el harness completo de Claude Code** (no una app recortada), con acceso a shell/OS, web, y
+servicios personales vía tool calling + MCP. Autentica con la **suscripción Claude Pro Max**
+existente. Prioridad #1: **experiencia de usuario** — baja latencia percibida, interrupción
+natural, seguridad ante acciones destructivas.
 
-**No-objetivos (v1):** cobertura total de "toda mi vida"; multi-dispositivo/remoto; voz
-offline; el modelo CSM de Sesame (descartado, ver §9).
+**No-objetivos (v1):** cobertura total de "toda mi vida"; multi-dispositivo/remoto; voz offline;
+GUI computer-use (clic en apps de escritorio) — se pospone; el modelo CSM de Sesame (descartado,
+§9).
 
-## 2. Contexto y decisiones clave
+## 2. Decisión central: el cerebro ES Claude Code
 
-- **Cerebro = Claude Agent SDK (Python).** Envuelve el mismo loop agéntico de Claude Code:
-  MCP nativo, hooks de ciclo de vida, sesión persistente, gestión de contexto. Autentica con
-  `~/.claude/.credentials.json` (suscripción Pro Max) — **sin API key, sin costo marginal de
-  cerebro**. No construimos el harness de agente; lo envolvemos.
-- **Capa de voz = Pipecat.** Framework de voz por pipeline (Daily). Resuelve VAD, turn
-  detection, barge-in a nivel de frame, y streaming de TTS — el trabajo que a implementaciones
-  a mano les cuesta semanas.
-- **STT = Deepgram Flux.** Streaming, hecho para agentes conversacionales, interrupción
-  natural, español nativo.
-- **TTS = ElevenLabs Flash v2.5**, plan mensual de pago. ~75ms TTFB, español nativo. Un solo
-  backend TTS.
-- **Un solo proceso Python asyncio**, dos módulos con frontera limpia: `voice` (Pipecat I/O) y
-  `brain` (Agent SDK). El stack API-only elimina la GPU, así que no hace falta separar procesos
-  ni sockets.
+**El "cerebro" es el harness interno de Claude Code, manejado por código vía el Claude Agent
+SDK (`claude-agent-sdk`, Python).** Verificado como autoritativo (ago 2026): el Agent SDK expone
+el **mismo motor** que Claude Code interactivo — idénticas tools built-in (Bash, Read/Write/Edit,
+Grep, Glob, WebSearch, WebFetch, subagentes), soporte MCP completo, y hooks (PreToolUse, etc.).
+No es una versión reducida; es Claude Code como librería.
 
-## 3. Arquitectura
+- **Auth por suscripción, sin API key.** Confirmado en la máquina: `~/.claude/.credentials.json`
+  contiene `claudeAiOauth` (`subscriptionType`, `rateLimitTier`). Si `ANTHROPIC_API_KEY` no está
+  seteada, el SDK usa la suscripción Pro Max. Para always-on: `claude setup-token` →
+  `CLAUDE_CODE_OAUTH_TOKEN`. **Costo marginal de cerebro = $0.**
+- **Sesión persistente:** un `ClaudeSDKClient` abierto por toda la sesión de voz → sin cold-start,
+  contexto vivo entre turnos (elimina el error de latencia #1 del prior art).
+- **Streaming token a token:** `ClaudeAgentOptions(include_partial_messages=True)` → `StreamEvent`
+  con `text_delta` en eventos `content_block_delta`.
+
+## 3. Acceso a la vida del usuario (tools)
+
+| Capacidad | Mecanismo | Estado |
+|---|---|---|
+| Shell / OS completo | Tool **Bash** (Git Bash/PowerShell en Windows) | ✅ built-in |
+| Web use (navegar/automatizar) | **Playwright MCP** + `WebSearch`/`WebFetch` | ✅ (Playwright ya conectado en el entorno) |
+| Servicios personales | MCP connectors (Calendar, Gmail, etc.) | ✅ v1 |
+| GUI computer-use (clic en apps escritorio) | MCP Windows (pyautogui/screenshot) | ⏸ pospuesto; viable en Windows nativo a futuro |
+
+El `computer-use` oficial de Anthropic es solo macOS/interactivo → no se usa. En Windows nativo,
+si algún día se requiere GUI-clicking, entra un MCP de comunidad como fase aparte. Para v1, Bash
+(todo el OS) + Playwright (toda la web) + MCP (servicios) cubren el acceso a la vida.
+
+## 4. Arquitectura
 
 ```
-┌─ proceso jarvis (asyncio) ─────────────────────────────────┐
+┌─ proceso jarvis (Windows nativo, Python asyncio) ──────────┐
 │                                                            │
 │  módulo voice (Pipecat pipeline)                           │
 │    mic → wake word "Jarvis" → VAD/turn detection           │
 │        → Deepgram Flux (STT, español)                      │
 │    spk ← ElevenLabs Flash (TTS, español)                   │
 │    barge-in / endpointing: nativos del framework           │
-│                     ↕  (frames de texto + eventos)         │
+│                     ↕  (texto + eventos)                   │
 │  módulo brain (custom Pipecat LLM service)                 │
-│    → sesión persistente del Claude Agent SDK               │
-│    → hook PreToolUse: gate de confirmación                 │
-│    → MCP servers: Calendar, Gmail, timers…                 │
-│    → auth: suscripción Pro Max (credentials.json)          │
+│    → ClaudeSDKClient persistente (harness de Claude Code)  │
+│    → hook PreToolUse: gate de confirmación (§6)            │
+│    → tools: Bash, WebSearch/WebFetch, MCP (Playwright,     │
+│             Calendar, Gmail, timers…)                      │
+│    → auth: Pro Max (CLAUDE_CODE_OAUTH_TOKEN / credentials) │
 └────────────────────────────────────────────────────────────┘
 ```
 
-**Frontera de módulos:** `voice` solo mueve audio↔texto y emite eventos (wake, transcript,
-barge_in, speech_done). `brain` solo consume texto y produce texto/decisiones de tool. El
-`brain` no importa nada de audio → se testea entero con transcripts de entrada y un MCP mock.
+**Un solo proceso** Python asyncio (el stack es API-only para voz → sin GPU → no hace falta
+separar procesos). Dos módulos con frontera limpia: `voice` mueve audio↔texto y emite eventos
+(wake, transcript, barge_in, speech_done); `brain` consume texto y produce texto/decisiones de
+tool vía `ClaudeSDKClient`. `brain` no importa audio → se testea con transcripts + MCP mock.
 
-## 4. Flujo de un turno
+## 5. Flujo de un turno
 
 1. Usuario dice "Jarvis" → wake word activa la escucha.
 2. Usuario habla → Deepgram transcribe en streaming; VAD/turn detection marca fin de turno.
-3. `brain` entrega el texto a la sesión persistente del Agent SDK.
+3. `brain` inyecta el texto en el `ClaudeSDKClient` persistente.
 4. Apenas Claude decide usar una tool, `brain` emite un **relleno hablado** ("dame un segundo,
-   reviso tu calendario") → ElevenLabs empieza a hablar de inmediato.
+   reviso tu calendario") → ElevenLabs habla de inmediato.
 5. Claude hace stream de tokens → `brain` corta por frase → ElevenLabs habla frase por frase
    mientras Claude sigue generando.
 6. Si la tool cambia estado, el **gate de confirmación** (§6) interrumpe antes de ejecutar.
-7. Usuario puede hablar encima en cualquier momento → barge-in corta el TTS y reinicia el turno.
+7. Barge-in: el usuario habla encima → corta el TTS y reinicia el turno.
 
-## 5. Camino único al cerebro
+## 6. Camino único al cerebro
 
-**Todos los turnos van a Claude** (decisión del usuario: sin router/clasificador que se
-equivoque). Optimización de latencia y cuota por configuración, no por bifurcación:
+**Todos los turnos van a Claude** (sin router/clasificador que se equivoque). Optimización por
+config, no por bifurcación: modelo por defecto rápido (Haiku) para conversación, escala a Sonnet
+cuando la tarea lo pide; reasoning bajo por defecto; sesión persistente. Primera sílaba objetivo
+**<1.5s** (vs 5-12s del prior art), vía streaming por frase + relleno hablado.
 
-- Modelo por defecto **Haiku** para conversación; se escala a Sonnet solo cuando la tarea lo
-  requiere (lo decide el propio agente / política de sistema).
-- Reasoning bajo por defecto.
-- Sesión **persistente** (no cold-start por turno) — el error de latencia #1 en el prior art.
-- Streaming por frase + relleno hablado → primera sílaba objetivo **<1.5s** (vs 5-12s del
-  prior art de referencia).
+## 7. Gate de confirmación (seguridad)
 
-## 6. Gate de confirmación (seguridad)
+Sin pantalla, la voz no puede ejecutar acciones destructivas por error o mala transcripción.
+Mecanismo: **hook `PreToolUse` / callback `canUseTool` del Agent SDK** (determinístico, no
+depende del prompt). El callback recibe `tool_name` + `tool_input`, y retorna
+`hookSpecificOutput.permissionDecision = "allow" | "deny"`.
 
-Sin pantalla, la voz no puede ejecutar acciones destructivas por error o por mala transcripción.
-Implementado como **hook `PreToolUse` determinístico del Agent SDK** (no depende del prompt):
+- Tool **solo-lectura** (leer agenda, buscar/resumir email, `WebFetch`) → allow directo.
+- Tool que **cambia estado** (enviar, borrar, crear, agendar; `Bash` con comandos mutantes) → el
+  hook pausa, llama al módulo `voice` para verbalizar la acción concreta ("voy a enviar este
+  correo a X, ¿confirmas?"), espera "sí" hablado, y recién allow/deny.
 
-- Tool clasificada **solo-lectura** (leer agenda, buscar/resumir email) → ejecuta directo.
-- Tool que **cambia estado** (enviar, borrar, crear, agendar, modificar) → el hook pausa,
-  Jarvis verbaliza la acción concreta ("voy a enviar este correo a X con asunto Y, ¿confirmas?")
-  y espera un "sí" hablado antes de ejecutar.
+La clasificación read-only vs state-changing es una tabla explícita por tool + patrón de comando
+Bash, no inferida. (Nota: timeout por defecto del hook 600s — suficiente para confirmación por
+voz.)
 
-La clasificación read-only vs state-changing es una tabla explícita por tool, no inferida.
+## 8. Alcance v1 y tools
 
-## 7. Alcance v1 y tools
-
-v1 = **loop de voz funcionando + cerebro persistente + gate + 3 tools reales**. La arquitectura
-permite enchufar tools nuevas sin tocar el core.
+v1 = **loop de voz funcionando + `ClaudeSDKClient` persistente + gate + 3 tools reales**. La
+arquitectura permite enchufar tools sin tocar el core.
 
 Tools candidatas v1:
 - **Calendar**: leer agenda (read-only) + crear evento (con confirmación).
-- **Gmail**: leer/resumir (read-only) + redactar borrador (con confirmación; enviar queda v2 o
-  detrás de doble confirmación).
+- **Gmail**: leer/resumir (read-only) + redactar borrador (con confirmación; enviar → v2 o doble
+  confirmación).
 - **Timers/recordatorios** locales.
 
-Todo lo demás (Slack, Notion, CRM, control de OS, etc.) = v2+.
+Bash y WebSearch/WebFetch/Playwright están disponibles desde el inicio (son built-in/ya
+conectados), sujetos al gate. Slack, Notion, CRM, GUI computer-use = v2+.
 
-## 8. Fase 0 — verificación de riesgos (antes de construir v1)
+## 8b. Fase 0 — verificación de riesgos (antes de v1)
 
-Riesgos que se prueban primero porque pueden cambiar decisiones:
+1. **Runtime Windows nativo.** Python 3.12 en Windows + `claude` CLI Windows autenticado
+   (`claude /login` o `setup-token`) + `claude-agent-sdk` instalado + `ClaudeSDKClient` conecta y
+   hace un turno con streaming. Verificar que la tool Bash funciona en Windows (Git Bash).
+2. **Auth suscripción headless.** `ClaudeSDKClient` corre sin `ANTHROPIC_API_KEY`, usando la
+   suscripción. Probar `CLAUDE_CODE_OAUTH_TOKEN` para always-on. Verificar límites de uso Pro Max
+   en operación intensa.
+3. **Audio Windows (WASAPI).** Captura mic + reproducción de baja latencia con
+   `sounddevice`/Pipecat en Windows nativo. (Riesgo bajo — sin el problema RDP de WSL2.)
+4. **Latencia real end-to-end.** Medir TTFA de un turno completo con sesión persistente. Confirmar
+   <1.5s alcanzable.
+5. **Auth MCP headless.** Que los MCP (Playwright, Calendar, Gmail) corran bajo el SDK sin login
+   interactivo; si un connector no re-autentica headless → MCP local con OAuth propio.
 
-1. **Auth de MCP headless.** Los MCP de claude.ai (Gmail, Calendar) están atados al login
-   interactivo de claude.ai. Verificar si el Agent SDK los usa headless. Si no → MCP locales con
-   OAuth propio (Google Calendar/Gmail API). Define qué tools entran realmente a v1.
-2. **Audio en WSL2.** WSLg + PulseAudio (`PULSE_SERVER=unix:/mnt/wslg/PulseServer`) con
-   `PulseAudioRDPSource`/`Sink` disponibles. Probar captura + reproducción de baja latencia con
-   `sounddevice`/Pipecat. Fallback: capa de audio como proceso nativo Windows.
-3. **Latencia real end-to-end.** Medir TTFA de un turno completo con la sesión persistente antes
-   de invertir en features. Confirmar que <1.5s es alcanzable con este stack.
-4. **Agent SDK + suscripción headless.** Confirmar que `claude-agent-sdk` en Python autentica
-   con `credentials.json` sin API key y que el uso intenso no revienta límites de Pro Max.
-
-## 8b. Selección de frameworks por adopción (jul 2026)
-
-Elección anclada en estrellas/actividad de GitHub, no en preferencia:
+## 8c. Selección de frameworks por adopción (jul 2026)
 
 | Repo | Stars | Veredicto |
 |---|---|---|
@@ -132,43 +147,43 @@ Elección anclada en estrellas/actividad de GitHub, no en preferencia:
 | `mcp-use-voice-assistant` | 34 | Claude solo por API key. Referencia. |
 | `Kevthetech143/claude-voice` | 2 | Arquitectura idéntica a la nuestra pero demo sin licencia/incompleto → leer para ideas, **no forkear**. |
 
-El cerebro (Agent SDK) no tiene alternativa: es el único camino que autentica con la
-suscripción Pro Max en vez de API por token.
+El cerebro (Claude Code vía Agent SDK) no tiene alternativa: es el único camino que autentica con
+la suscripción Pro Max en vez de API por token.
 
 ## 9. Descartado: CSM (Sesame)
 
 Petición original. Descartado tras análisis: CSM-1B es **solo TTS contextual en inglés**, no
 conversacional; el modelo bueno de las demos de Sesame no se liberó; requiere finetune para
 español; y con presupuesto para API de voz, ElevenLabs da mejor voz, en español, más rápido. Lo
-único que CSM aportaba (prosodia condicionada al turno previo) no compensa inglés + finetune +
-GPU. Puede volver como backend opcional si algún día se finetunea a español.
+único que aportaba (prosodia condicionada al turno previo) no compensa inglés + finetune + GPU.
+Puede volver como backend opcional si se finetunea a español.
 
 ## 10. Testing
 
-- **`brain` sin voz ni GPU:** unit tests con transcripts de entrada + MCP mock. Toda la lógica de
-  gate, clasificación read/write, chunking por frase y política de relleno corre en CI en ms.
-- **`voice` integración:** pipeline de Pipecat con STT/TTS reales, prueba de barge-in y
-  wake word.
-- **Métrica desde día 1:** time-to-first-audio (TTFA) por turno, registrada y monitoreada.
+- **`brain` sin voz:** unit tests con transcripts de entrada + MCP mock. Toda la lógica de gate,
+  clasificación read/write, chunking por frase y política de relleno corre en CI en ms.
+- **`voice` integración:** pipeline Pipecat con STT/TTS reales; prueba de barge-in y wake word.
+- **Métrica desde día 1:** time-to-first-audio (TTFA) por turno, registrada.
 
 ## 11. Costos
 
 - Claude (cerebro): **$0 marginal** — cubierto por Pro Max existente. Riesgo: límites de uso en
-  operación siempre-activa (mitigado por Haiku + reasoning bajo).
-- ElevenLabs Flash: **plan mensual de pago** (Starter/Creator según volumen; ~1000 créditos ≈
-  1 min de voz; Flash = 0.5 créditos/carácter).
+  operación always-on (mitigado por Haiku + reasoning bajo).
+- ElevenLabs Flash: **plan mensual de pago** (~1000 créditos ≈ 1 min; Flash = 0.5 créditos/char).
 - Deepgram Flux STT: uso por minuto, aparte.
 
 ## 12. Stack
 
 | Capa | Elección |
 |---|---|
+| Plataforma | Windows nativo |
 | Orquestación de voz | Pipecat |
 | STT | Deepgram Flux (español) |
 | TTS | ElevenLabs Flash v2.5 (español, plan de pago) |
 | Wake word / VAD / barge-in | Pipecat nativo |
-| Cerebro | Claude Agent SDK (Python), sesión persistente |
-| Auth cerebro | Suscripción Pro Max (`~/.claude/.credentials.json`) |
-| Tools | MCP (Calendar, Gmail, timers en v1) |
+| Audio I/O | sounddevice / WASAPI |
+| Cerebro | Claude Code harness vía `claude-agent-sdk` (`ClaudeSDKClient` persistente) |
+| Auth cerebro | Suscripción Pro Max (`CLAUDE_CODE_OAUTH_TOKEN` / `credentials.json`) |
+| Tools | Bash, WebSearch/WebFetch, MCP (Playwright + Calendar, Gmail, timers en v1) |
 | Runtime | Un proceso Python 3.12 asyncio |
-| Confirmación | Hook `PreToolUse` del Agent SDK |
+| Confirmación | Hook `PreToolUse` / `canUseTool` del Agent SDK |
