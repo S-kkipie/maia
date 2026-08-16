@@ -1,27 +1,30 @@
-"""Fallback de STT: AssemblyAI (nube) -> whisper.cpp (local) sin reiniciar.
+"""Fallback de STT: AssemblyAI (nube) -> whisper.cpp (local), con recuperación.
 
 Va DESPUÉS de los dos STT en el pipeline:
     input(vad) -> AssemblyAI -> TagAAI -> WhisperCppSTT(standby) -> STTFallbackGate -> brain
 
 - TagAAI marca las transcripciones de AssemblyAI. En el gate, lo NO marcado es whisper.
-- El gate normalmente reenvía las de AssemblyAI y descarta whisper (que está en standby).
-- Cuando AssemblyAI falla, el gate enciende whisper y a partir de ahí reenvía whisper
-  y descarta AssemblyAI. Dos disparadores:
-    1) ErrorFrame de AssemblyAI (agota sus 3 reintentos de reconexión).
-    2) Hablaste (VAD) pero AssemblyAI no transcribió nada en MISS_TIMEOUT, dos veces
-       seguidas (cubre créditos agotados donde el WS sigue abierto pero mudo).
+- Normal: reenvía AssemblyAI, descarta whisper (que está en standby).
+- Señal de "AssemblyAI VIVO" en tiempo real = CUALQUIER frame suyo, interim (parcial)
+  o final. Mientras lleguen interims, NO hay fallback (aunque hables minutos y el final
+  tarde). Esto evita el fallback falso.
+- Cae a whisper solo si: (1) ErrorFrame de AssemblyAI, o (2) hiciste MISS_LIMIT turnos
+  completos sin que AssemblyAI emitiera absolutamente NADA (ni interims) — señal real de
+  que murió.
+- RECUPERACIÓN: si ya cayó a whisper y AssemblyAI vuelve a emitir, regresa solo a la nube.
 """
 from pipecat.frames.frames import (
     ErrorFrame,
     Frame,
     InterimTranscriptionFrame,
     TranscriptionFrame,
+    VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-MISS_TIMEOUT = 4.0  # s de espera de una transcripción de AssemblyAI tras dejar de hablar
-MISS_LIMIT = 2      # misses seguidos antes de caer a whisper
+MISS_TIMEOUT = 8.0  # s tras dejar de hablar sin NINGÚN frame de AssemblyAI = 1 miss
+MISS_LIMIT = 3      # misses seguidos antes de caer a whisper (conservador)
 
 
 class TagAAI(FrameProcessor):
@@ -35,11 +38,11 @@ class TagAAI(FrameProcessor):
 
 
 class STTFallbackGate(FrameProcessor):
-    """Enruta transcripciones y decide cuándo caer de AssemblyAI a whisper.cpp."""
+    """Enruta transcripciones y decide cuándo caer a whisper y cuándo volver."""
 
     def __init__(self, whisper, **kwargs):
         super().__init__(**kwargs)
-        self._whisper = whisper  # WhisperCppSTT en standby; le llamamos activate()
+        self._whisper = whisper  # WhisperCppSTT en standby
         self._fallback = False
         self._misses = 0
         self._miss_task = None
@@ -48,30 +51,34 @@ class STTFallbackGate(FrameProcessor):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, ErrorFrame):
-            self._trigger("AssemblyAI reportó error irrecuperable")
+            self._to_whisper("AssemblyAI reportó error irrecuperable")
             await self.push_frame(frame, direction)  # no la tragamos (es no-fatal)
+            return
+
+        if isinstance(frame, VADUserStartedSpeakingFrame):
+            self._cancel_miss_timer()  # turno nuevo: no penalices lo anterior
+            await self.push_frame(frame, direction)
             return
 
         if isinstance(frame, VADUserStoppedSpeakingFrame):
             if not self._fallback:
-                self._arm_miss_timer()
+                self._arm_miss_timer()  # vigila si AssemblyAI no dio NADA en este turno
             await self.push_frame(frame, direction)
             return
 
         if isinstance(frame, (TranscriptionFrame, InterimTranscriptionFrame)):
             src = getattr(frame, "_maia_src", "whisper")
             if src == "aai":
-                # AssemblyAI vivo: cancela el miss timer pendiente.
-                if isinstance(frame, TranscriptionFrame) and frame.text.strip():
-                    self._misses = 0
-                    self._cancel_miss_timer()
+                # CUALQUIER frame de AssemblyAI (interim o final) => está VIVO ahora mismo.
+                self._misses = 0
+                self._cancel_miss_timer()
                 if self._fallback:
-                    return  # ya estamos en whisper: descarta AssemblyAI
+                    self._to_aai("AssemblyAI volvió a responder")  # recuperación
                 await self.push_frame(frame, direction)
             else:  # whisper
                 if self._fallback:
                     await self.push_frame(frame, direction)
-                # en modo normal whisper está en standby y no emite; si emitiera, se ignora
+                # en modo nube whisper está en standby y no emite; si emitiera, se ignora
             return
 
         await self.push_frame(frame, direction)
@@ -102,11 +109,19 @@ class STTFallbackGate(FrameProcessor):
         self._misses += 1
         print(f"[STT] AssemblyAI sin respuesta ({self._misses}/{MISS_LIMIT})", flush=True)
         if self._misses >= MISS_LIMIT:
-            self._trigger("AssemblyAI dejó de transcribir")
+            self._to_whisper("AssemblyAI dejó de transcribir")
 
-    def _trigger(self, reason: str):
+    def _to_whisper(self, reason: str):
         if self._fallback:
             return
         self._fallback = True
         print(f"[STT] Fallback -> whisper.cpp local: {reason}", flush=True)
         self._whisper.activate()
+
+    def _to_aai(self, reason: str):
+        if not self._fallback:
+            return
+        self._fallback = False
+        self._misses = 0
+        print(f"[STT] Recuperado -> AssemblyAI (nube): {reason}", flush=True)
+        self._whisper.deactivate()

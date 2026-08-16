@@ -76,6 +76,12 @@ class WhisperCppSTT(SegmentedSTTService):
             self.active = True
             print(f"[STT] whisper.cpp ACTIVO (modelo {self._model_name})", flush=True)
 
+    def deactivate(self):
+        """Vuelve a standby (lo llama el gate cuando AssemblyAI se recupera)."""
+        if self.active:
+            self.active = False
+            print("[STT] whisper.cpp en standby (AssemblyAI recuperado)", flush=True)
+
     async def run_stt(self, audio: bytes):
         # Standby frío: bufferea (barato) pero no gasta CPU en inferencia.
         if not self.active or not audio:
