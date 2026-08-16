@@ -35,7 +35,8 @@ from pipecat.transports.local.audio import (  # noqa: E402
     LocalAudioTransportParams,
 )
 
-SR = 48000  # rate nativo WASAPI
+SR = 48000  # rate nativo WASAPI (speaker)
+FISH_SR = 44100  # Fish NO soporta 48000 en pcm (max 44100); el output transport resamplea 44100->48000
 state = {"t0": None, "first_audio": None}
 
 
@@ -86,7 +87,7 @@ async def brain_stream(client, task, prompt):
 async def main():
     tts = FishAudioTTSService(
         api_key=os.getenv("FISHAUDIO_API_KEY"),
-        sample_rate=SR,
+        sample_rate=FISH_SR,  # Fish max 44100; transport out=48000 resamplea
         settings=FishAudioTTSService.Settings(
             model="s2.1-pro-free",  # se envia como header WS -> tier gratis
             voice=REFERENCE_ID,     # reference_id de una voz espanola (o None = default)
