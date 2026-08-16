@@ -6,6 +6,7 @@ completo cuando dejas de hablar. Arranca en "standby frío" (active=False): no g
 CPU en inferencia hasta que el gate lo activa porque AssemblyAI cayó.
 """
 import asyncio
+import os
 import re
 
 import numpy as np
@@ -25,14 +26,15 @@ _ARTIFACT = re.compile(r"^[\[\(\*][^\]\)]*[\]\)\*]?$")
 class WhisperCppSTT(SegmentedSTTService):
     """whisper.cpp local como STT segmentado. Standby frío hasta activate()."""
 
-    def __init__(self, model_name: str = "base", models_dir: str = "models/whisper",
-                 language: Language = Language.ES, n_threads: int = 4, **kwargs):
+    def __init__(self, model_name: str = "medium-q5_0", models_dir: str = "models/whisper",
+                 language: Language = Language.ES, n_threads: int | None = None, **kwargs):
         super().__init__(**kwargs)
         self._model_name = model_name
         self._models_dir = models_dir
         self._lang = language
-        self._n_threads = n_threads
+        self._n_threads = n_threads or os.cpu_count() or 4
         self._model = None
+        self._loading = None  # task de carga en curso (evita cargas duplicadas)
         self._resampler = SOXRAudioResampler()
         self.active = False  # el gate lo pone True cuando AssemblyAI falla
 
@@ -43,10 +45,19 @@ class WhisperCppSTT(SegmentedSTTService):
 
     async def start(self, frame: StartFrame):
         await super().start(frame)
-        if self._model is None:
-            # La carga del ggml bloquea ~7s: la hacemos en un hilo para no
-            # congelar el event loop del pipeline.
+        # En modo whisper puro (active desde el arranque) precargamos el modelo.
+        # En 'auto' NO cargamos nada: whisper está en standby y quizá nunca se use,
+        # así el arranque no se frena ~15s cargando un ggml grande. Se carga solo
+        # si el fallback se dispara (carga perezosa en run_stt).
+        if self.active and self._model is None:
             self._model = await asyncio.to_thread(self._load_model)
+
+    async def _ensure_model(self):
+        if self._model is not None:
+            return
+        if self._loading is None:
+            self._loading = asyncio.ensure_future(asyncio.to_thread(self._load_model))
+        self._model = await self._loading
 
     def _load_model(self):
         from pywhispercpp.model import Model
@@ -67,8 +78,11 @@ class WhisperCppSTT(SegmentedSTTService):
 
     async def run_stt(self, audio: bytes):
         # Standby frío: bufferea (barato) pero no gasta CPU en inferencia.
-        if not self.active or self._model is None or not audio:
+        if not self.active or not audio:
             return
+        if self._model is None:
+            print(f"[STT] cargando whisper.cpp {self._model_name}…", flush=True)
+            await self._ensure_model()
 
         # PCM16 @ sample_rate del pipeline (48k) -> 16k float32 mono para whisper.
         if self.sample_rate != WHISPER_SR:

@@ -76,7 +76,7 @@ def load() -> Config:
         gemini_key=os.getenv("GEMINI_API_KEY") or None,
         reflex_model=os.getenv("MAIA_REFLEX_MODEL") or "gemini-2.5-flash-lite",
         stt_engine=(os.getenv("MAIA_STT") or "auto").strip().lower(),
-        whisper_model=os.getenv("MAIA_WHISPER_MODEL") or "base",
+        whisper_model=os.getenv("MAIA_WHISPER_MODEL") or "medium-q5_0",
     )
 
 
