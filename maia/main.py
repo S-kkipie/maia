@@ -7,7 +7,7 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.services.fish.tts import FishAudioTTSService
 
-from maia import config, services
+from maia import config, mcps, services
 from maia.audio_out import ResampleOut
 from maia.brain import MaiaBrain, build_claude_options, make_timer_server, make_voice_server
 from maia.clean import SpeechCleaner
@@ -42,9 +42,11 @@ async def main():
 
     voice_server = make_voice_server(switch_voice)
     timer_server = make_timer_server(fire_timer)
+    # in-process (voz, timers) + MCPs externos del registro (playwright/browser, etc.)
+    servers = {"voz": voice_server, "timers": timer_server, **mcps.load_registry()}
     options = build_claude_options(
-        mcp_servers={"voz": voice_server, "timers": timer_server},
-        allowed_tools=["mcp__voz__set_voice", "mcp__timers__set_timer"],
+        mcp_servers=servers,
+        allowed_tools=mcps.allowed_tools_for(servers.keys()),
     )
 
     async with ClaudeSDKClient(options=options) as claude:

@@ -146,6 +146,7 @@ class MaiaBrain(FrameProcessor):
         hb = self.create_task(heartbeat())
         buf = ""
         pending = ""  # para loguear a Claude en tiempo real, frase por frase
+        claude_failed = False
         try:
             await self._claude.query(user_text)
             async for message in self._claude.receive_response():
@@ -162,16 +163,26 @@ class MaiaBrain(FrameProcessor):
                         idx = match_endofsentence(pending)
                 if isinstance(message, ResultMessage):
                     break
+        except Exception as e:  # Claude no disponible -> fallback a Gemini
+            print(f"[FALLBACK] Claude no disponible: {e}", flush=True)
+            claude_failed = True
         finally:
             done["v"] = True
             await self.cancel_task(hb)
         if pending.strip():
             print(f"[CLAUDE] {pending.strip()}", flush=True)
 
-        raw = buf.strip()
-        if not raw:
-            return
-        spoken = await self._reflex.humanize(raw) if self._reflex is not None else raw
+        if claude_failed:
+            spoken = (
+                await self._reflex.full_answer(user_text)
+                if self._reflex is not None
+                else "Perdona, ahora mismo no puedo responder."
+            )
+        else:
+            raw = buf.strip()
+            if not raw:
+                return
+            spoken = await self._reflex.humanize(raw) if self._reflex is not None else raw
         rest = spoken
         idx = match_endofsentence(rest)
         while idx:

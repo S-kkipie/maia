@@ -59,6 +59,20 @@ class Reflex:
         except Exception:
             return "Sigo en ello."
 
+    async def full_answer(self, user_text: str) -> str:
+        """Respuesta completa por Gemini (fallback si Claude no está disponible)."""
+        try:
+            r = await self._client.aio.models.generate_content(
+                model=self._model,
+                contents=(
+                    f"{PERSONA}\n\nResponde de forma útil y natural, en español, breve y hablada, "
+                    f"a esto: {user_text}\nMaia:"
+                ),
+            )
+            return (r.text or "").strip() or "Perdona, ahora no puedo responder eso."
+        except Exception:
+            return "Perdona, ahora mismo no puedo responder."
+
     async def humanize(self, raw: str) -> str:
         """Reescribe la salida cruda de Claude en una respuesta hablada, corta y limpia."""
         try:
