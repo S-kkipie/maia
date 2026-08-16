@@ -8,6 +8,8 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.services.fish.tts import FishAudioTTSService
 
+import pathlib
+
 from maia import config, mcps, services
 from maia.audio_out import ResampleOut
 from maia.brain import (
@@ -17,6 +19,7 @@ from maia.brain import (
     make_timer_server,
     make_voice_server,
 )
+from maia.computer import make_computer_server
 from maia.clean import SpeechCleaner
 from maia.reflex import Reflex
 from maia.stt_fallback import STTFallbackGate, TagAAI
@@ -85,11 +88,15 @@ async def main(stt_engine: str | None = None):
         "voz": voice_server,
         "timers": timer_server,
         "config": make_config_server(),
+        "pc": make_computer_server(),  # computer use: ojos + manos en el escritorio
         **mcps.load_registry(),
     }
+    plugin_dir = pathlib.Path(__file__).resolve().parents[1] / "maia_plugin"
     options = build_claude_options(
         mcp_servers=servers,
         allowed_tools=mcps.allowed_tools_for(servers.keys()),
+        plugins=[{"type": "local", "path": str(plugin_dir)}],  # skill computer-use
+        enable_skills=True,
     )
 
     async with ClaudeSDKClient(options=options) as claude:

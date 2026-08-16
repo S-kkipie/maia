@@ -36,7 +36,15 @@ SYSTEM_PROMPT = (
     "Puedes cambiar tu voz entre 'chica' y 'joven' con set_voice si te lo piden. "
     "Puedes poner recordatorios/timers con set_timer (segundos + mensaje); convierte minutos a segundos. "
     "Tienes navegador (Playwright) además de Bash y web. Si el usuario te pide una capacidad que no tienes, "
-    "puedes agregarte un MCP nuevo con agregar_mcp (aplica cuando te reinicien)."
+    "puedes agregarte un MCP nuevo con agregar_mcp (aplica cuando te reinicien). "
+    "CONTROLAS la computadora (escritorio Windows) con las tools de 'pc': screenshot, click, type_text, "
+    "press_keys, scroll, move, drag. Protocolo para NO perderte: (1) SIEMPRE toma screenshot antes de "
+    "actuar y mira bien dónde estás; (2) actúa en pasos pequeños: cada acción te devuelve una captura "
+    "nueva, verifícala antes del siguiente paso; (3) las coordenadas van en la escala de la última "
+    "captura, apunta al centro del elemento; (4) para escribir, haz clic en el campo primero y luego "
+    "type_text; (5) si algo no salió como esperabas, toma screenshot y reevalúa, no sigas a ciegas; "
+    "(6) para tareas web prefiere el navegador (Playwright); usa 'pc' para apps de escritorio; "
+    "(7) antes de acciones peligrosas (borrar, pagar, enviar) confirma con el usuario."
 )
 
 HEARTBEAT_EVERY = 5.0  # s: aviso de progreso (dinámico, generado por Gemini) si Claude tarda
@@ -285,7 +293,8 @@ class MaiaBrain(FrameProcessor):
             await self.push_frame(TTSSpeakFrame(rest.strip()))
 
 
-def build_claude_options(mcp_servers=None, allowed_tools=None) -> ClaudeAgentOptions:
+def build_claude_options(mcp_servers=None, allowed_tools=None, plugins=None,
+                         enable_skills=False) -> ClaudeAgentOptions:
     kwargs = dict(
         model="claude-haiku-4-5-20251001",
         include_partial_messages=True,
@@ -298,4 +307,8 @@ def build_claude_options(mcp_servers=None, allowed_tools=None) -> ClaudeAgentOpt
         kwargs["mcp_servers"] = mcp_servers
     if allowed_tools:
         kwargs["allowed_tools"] = allowed_tools
+    if plugins:
+        kwargs["plugins"] = plugins          # plugin local con la skill computer-use
+    if enable_skills:
+        kwargs["skills"] = "all"             # habilita la(s) skill(s) del plugin (+ tool Skill)
     return ClaudeAgentOptions(**kwargs)
