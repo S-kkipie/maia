@@ -10,7 +10,7 @@ from pipecat.services.fish.tts import FishAudioTTSService
 
 import pathlib
 
-from maia import config, mcps, memory, services
+from maia import config, mcps, memory, services, ui
 from maia.audio_out import ResampleOut
 from maia.brain import (
     MaiaBrain,
@@ -61,12 +61,15 @@ async def _warmup(claude: ClaudeSDKClient):
             break
 
 
-async def main(stt_engine: str | None = None, brain: str | None = None):
+async def main(stt_engine: str | None = None, brain: str | None = None, ui_on: bool = False):
     cfg = config.load()
     if stt_engine:
         cfg.stt_engine = stt_engine
     if brain:
         cfg.brain_model = brain
+    if ui_on:
+        await ui.start_server()
+        await ui.emit("meta", brain=cfg.brain_model, stt=cfg.stt_engine)
     transport = services.build_transport(cfg)
     reflex = Reflex(cfg.gemini_key, cfg.reflex_model) if cfg.gemini_key else None
 
@@ -143,5 +146,18 @@ if __name__ == "__main__":
         help="Cerebro Claude: sonnet (default), haiku (rápido/simple), opus (máximo). "
              "Override de MAIA_BRAIN.",
     )
+    parser.add_argument("--ui", action="store_true",
+                        help="Abre la ventana (UI ligera con transcripciones y salida de Claude).")
     args = parser.parse_args()
-    asyncio.run(main(args.stt, args.brain))
+    if args.ui:
+        # El pipeline corre en un hilo; pywebview necesita el hilo principal.
+        import threading
+
+        ui.enable()
+        threading.Thread(
+            target=lambda: asyncio.run(main(args.stt, args.brain, ui_on=True)),
+            daemon=True,
+        ).start()
+        ui.run_window()  # bloquea hasta que cierres la ventana
+    else:
+        asyncio.run(main(args.stt, args.brain))

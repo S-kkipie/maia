@@ -24,6 +24,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.utils.string import match_endofsentence
 
+from maia import ui
 from maia.voices import VOICES
 
 SYSTEM_PROMPT = (
@@ -225,6 +226,22 @@ def _activity_events(message) -> list[str]:
     return events
 
 
+async def _emit_tools(message) -> None:
+    """Manda a la UI las tools que ejecuta Claude y sus resultados."""
+    if isinstance(message, AssistantMessage):
+        for b in message.content:
+            if isinstance(b, ToolUseBlock):
+                name = b.name.replace("mcp__", "").replace("__", ".")
+                await ui.emit("tool", name=name, io="in", text=_short(b.input, 140))
+    elif isinstance(message, UserMessage):
+        content = getattr(message, "content", None)
+        if isinstance(content, list):
+            for b in content:
+                if isinstance(b, ToolResultBlock):
+                    await ui.emit("tool", io="out", text=_short(_result_text(b), 200),
+                                  ok=not b.is_error)
+
+
 class MaiaBrain(FrameProcessor):
     def __init__(self, claude: ClaudeSDKClient, reflex=None, **kwargs):
         super().__init__(**kwargs)
@@ -244,6 +261,8 @@ class MaiaBrain(FrameProcessor):
             return
         self._recent_said.append((t, time.monotonic()))
         self._recent_said = self._recent_said[-8:]
+        await ui.emit("maia", text=t)
+        await ui.emit("status", state="speaking")
         await self.push_frame(TTSSpeakFrame(t))
 
     def _is_echo(self, text: str) -> bool:
@@ -272,6 +291,7 @@ class MaiaBrain(FrameProcessor):
                 print(f"[ECO] ignorado (Maia se oyó a sí misma): {text}", flush=True)
                 return
             print(f"[TÚ] {text}", flush=True)
+            await ui.emit("user", text=text)
             if self._claude_running:
                 # Maia está en una tarea: decide si es charla (sigue) o instrucción (toma).
                 self._side_task = self.create_task(self._handle_interruption(text))
@@ -328,6 +348,7 @@ class MaiaBrain(FrameProcessor):
                 await self._say(reply)
         if needs_claude:
             await self._run_claude(user_text)
+        await ui.emit("status", state="listening")
 
     async def _run_claude(self, user_text: str):
         # Recolecta lo que hace Claude (texto Y acciones de herramientas) y Gemini lo
@@ -358,6 +379,7 @@ class MaiaBrain(FrameProcessor):
         pending = ""  # para loguear a Claude en tiempo real, frase por frase
         claude_failed = False
         self._claude_running = True
+        await ui.emit("status", state="thinking")
         try:
             # Si quedó un interrupt del turno anterior en vuelo, deja que aterrice
             # antes de lanzar esta query (evita solapar turnos en el CLI).
@@ -369,6 +391,7 @@ class MaiaBrain(FrameProcessor):
             await self._claude.query(user_text)
             async for message in self._claude.receive_response():
                 _log_tools(message)  # [TOOL >]/[TOOL OK]: qué ejecuta Claude
+                await _emit_tools(message)  # mismas tools, a la UI
                 for ev in _activity_events(message):  # tools + resultados (sin imágenes)
                     activity.append(ev)
                 delta = _delta_text(message)
@@ -380,6 +403,7 @@ class MaiaBrain(FrameProcessor):
                         frag = pending[:idx].strip()
                         if frag:
                             print(f"[CLAUDE] {frag}", flush=True)
+                            await ui.emit("claude", text=frag)
                             activity.append(frag)
                         pending = pending[idx:]
                         idx = match_endofsentence(pending)
@@ -398,6 +422,7 @@ class MaiaBrain(FrameProcessor):
             await self.cancel_task(hb)
         if pending.strip():
             print(f"[CLAUDE] {pending.strip()}", flush=True)
+            await ui.emit("claude", text=pending.strip())
             activity.append(pending.strip())
 
         if claude_failed:
