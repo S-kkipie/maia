@@ -23,21 +23,15 @@ from pipecat.utils.string import match_endofsentence
 from maia.voices import VOICES
 
 SYSTEM_PROMPT = (
-    "Eres Maia, una asistente de voz mujer, en español. Hablas de forma cálida, "
-    "cercana y natural, como una persona real conversando, no como un robot. "
-    "Responde SIEMPRE en español, breve y para ser escuchada en voz alta: frases "
-    "cortas, sin markdown, sin listas ni emojis. Si no sabes algo, dilo con naturalidad. "
-    "Tuteas al usuario y suenas amable y con un toque de personalidad. "
-    "Puedes cambiar tu propia voz entre 'chica' y 'joven' con la herramienta set_voice "
-    "cuando el usuario te lo pida (por ejemplo: 'cambia a la voz joven'). "
-    "IMPORTANTE: cuando una tarea requiera varios pasos o usar herramientas, ve narrando "
-    "en voz alta y MUY breve qué haces en cada paso (ej: 'déjame revisar', 'ya encontré esto', "
-    "'ahora veo lo otro', 'listo'), para que el usuario sepa cómo vas y no se quede en silencio. "
-    "Cada aviso: una frase corta y natural. "
-    "NUNCA uses markdown ni símbolos de formato: nada de asteriscos (*), corchetes ([ ]), "
-    "almohadillas (#), acentos graves (`), ni listas con guiones o números. Solo texto plano, "
-    "como si lo estuvieras hablando en voz alta."
+    "Eres Maia, una asistente de voz mujer en español, cálida y natural. "
+    "Responde con LO ESENCIAL, directo y conciso — nada de ensayos ni listas largas. "
+    "Otra capa reescribirá tu respuesta para hablarla, así que no te preocupes por el formato, "
+    "pero sé breve y ve al grano. No incluyas URLs ni bloques de fuentes con enlaces; si citas una "
+    "fuente, basta el nombre del sitio. "
+    "Puedes cambiar tu propia voz entre 'chica' y 'joven' con la herramienta set_voice si te lo piden."
 )
+
+HEARTBEAT_EVERY = 5.0  # s: aviso de progreso (dinámico, generado por Gemini) si Claude tarda
 
 
 def make_voice_server(switch_cb):
@@ -104,23 +98,54 @@ class MaiaBrain(FrameProcessor):
             if reply.strip():
                 await self.push_frame(LLMTextFrame(reply))
         if needs_claude:
-            await self._stream_claude(user_text)
+            await self._run_claude(user_text)
         await self.push_frame(LLMFullResponseEndFrame())
 
-    async def _stream_claude(self, user_text: str):
+    async def _run_claude(self, user_text: str):
+        # Recolecta la respuesta completa de Claude (con heartbeat para no dejar silencio),
+        # luego Gemini la humaniza (corta, sin URLs/markdown/siglas) y la hablamos.
+        done = {"v": False}
+
+        async def heartbeat():
+            try:
+                while not done["v"]:
+                    await asyncio.sleep(HEARTBEAT_EVERY)
+                    if done["v"]:
+                        break
+                    phrase = (
+                        await self._reflex.heartbeat_phrase(user_text)
+                        if self._reflex is not None
+                        else "Sigo en ello."
+                    )
+                    if not done["v"]:
+                        await self.push_frame(LLMTextFrame(phrase))
+            except asyncio.CancelledError:
+                pass
+
+        hb = self.create_task(heartbeat())
         buf = ""
-        await self._claude.query(user_text)
-        async for message in self._claude.receive_response():
-            buf += _delta_text(message)
-            idx = match_endofsentence(buf)
-            while idx:
-                await self.push_frame(LLMTextFrame(buf[:idx]))
-                buf = buf[idx:]
-                idx = match_endofsentence(buf)
-            if isinstance(message, ResultMessage):
-                break
-        if buf.strip():
-            await self.push_frame(LLMTextFrame(buf))
+        try:
+            await self._claude.query(user_text)
+            async for message in self._claude.receive_response():
+                buf += _delta_text(message)
+                if isinstance(message, ResultMessage):
+                    break
+        finally:
+            done["v"] = True
+            await self.cancel_task(hb)
+
+        raw = buf.strip()
+        if not raw:
+            return
+        spoken = await self._reflex.humanize(raw) if self._reflex is not None else raw
+        rest = spoken
+        idx = match_endofsentence(rest)
+        while idx:
+            await self.push_frame(LLMTextFrame(rest[:idx]))
+            rest = rest[idx:]
+            idx = match_endofsentence(rest)
+        if rest.strip():
+            await self.push_frame(LLMTextFrame(rest))
 
 
 def build_claude_options(mcp_servers=None, allowed_tools=None) -> ClaudeAgentOptions:

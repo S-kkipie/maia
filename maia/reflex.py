@@ -25,10 +25,50 @@ INSTRUCCION = (
 )
 
 
+HUMANIZAR = (
+    PERSONA
+    + "\n\nAbajo va el resultado CRUDO del cerebro (puede tener markdown, URLs, listas, siglas, "
+    "y ser largo). Reescríbelo como lo diría Maia HABLANDO: español, natural, cálido y CORTO "
+    "(máximo 3 o 4 frases, lo esencial). Reglas estrictas:\n"
+    "- Sin URLs ni enlaces. Si hay fuentes, di solo el nombre del sitio ('según Improvado', 'lo vi en MNTN').\n"
+    "- Sin markdown, sin listas, sin viñetas, sin corchetes.\n"
+    "- No deletrees siglas: exprésalas de forma pronunciable o cámbialas por su significado "
+    "(por ejemplo 'A/B' -> 'pruebas comparativas', 'SEO' -> 'posicionamiento en buscadores').\n"
+    "- Ve al grano; si el tema es amplio, resume lo clave y ofrece contar más si quiere."
+)
+
+
 class Reflex:
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash-lite"):
         self._client = genai.Client(api_key=api_key)
         self._model = model
+
+    async def heartbeat_phrase(self, user_text: str) -> str:
+        """Frase de progreso dinámica y variada mientras Claude trabaja."""
+        try:
+            r = await self._client.aio.models.generate_content(
+                model=self._model,
+                contents=(
+                    f'Eres Maia, asistente de voz en español, cálida. El usuario pidió: "{user_text}". '
+                    "Sigues trabajando en ello y AÚN no terminas. Di UNA sola frase muy corta, natural y "
+                    "VARIADA para avisar que sigues en ello (puedes referirte a lo que buscas). "
+                    "No repitas siempre lo mismo ni uses 'un momento' genérico. Solo la frase, sin comillas."
+                ),
+            )
+            return (r.text or "").strip().strip('"') or "Sigo en ello."
+        except Exception:
+            return "Sigo en ello."
+
+    async def humanize(self, raw: str) -> str:
+        """Reescribe la salida cruda de Claude en una respuesta hablada, corta y limpia."""
+        try:
+            r = await self._client.aio.models.generate_content(
+                model=self._model,
+                contents=f"{HUMANIZAR}\n\nResultado crudo:\n{raw}\n\nMaia (hablando):",
+            )
+            return (r.text or "").strip() or raw
+        except Exception:
+            return raw
 
     async def respond(self, user_text: str) -> tuple[str, bool]:
         """Devuelve (texto_a_hablar, needs_claude)."""

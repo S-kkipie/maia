@@ -8,7 +8,9 @@ import re
 from pipecat.frames.frames import TextFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")   # [texto](url) -> texto
+_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")       # [texto](url) -> texto
+_PAREN_URL = re.compile(r"\s*\(\s*https?://[^)]+\)")  # texto(https://...) -> texto
+_URL = re.compile(r"https?://\S+")                  # url suelta -> fuera
 _MD = re.compile(r"(\*\*|\*|__|_|`+|~~|#+\s*|>+\s*)")
 _BRACKETS = re.compile(r"[\[\]]")
 _BULLET = re.compile(r"(?m)^\s*[-•*]\s+")
@@ -16,6 +18,8 @@ _BULLET = re.compile(r"(?m)^\s*[-•*]\s+")
 
 def clean_for_speech(text: str) -> str:
     text = _LINK.sub(r"\1", text)
+    text = _PAREN_URL.sub("", text)
+    text = _URL.sub("", text)
     text = _BULLET.sub("", text)
     text = _MD.sub("", text)
     text = _BRACKETS.sub("", text)
