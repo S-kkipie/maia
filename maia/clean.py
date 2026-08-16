@@ -5,7 +5,7 @@ loguea en consola lo que Maia va a decir ([MAIA]).
 """
 import re
 
-from pipecat.frames.frames import TextFrame
+from pipecat.frames.frames import TextFrame, TTSSpeakFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")       # [texto](url) -> texto
@@ -32,7 +32,7 @@ class SpeechCleaner(FrameProcessor):
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        if isinstance(frame, TextFrame) and getattr(frame, "text", None):
+        if isinstance(frame, (TextFrame, TTSSpeakFrame)) and getattr(frame, "text", None):
             cleaned = clean_for_speech(frame.text)
             frame.text = cleaned
             if cleaned.strip():

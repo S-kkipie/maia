@@ -11,9 +11,6 @@ from claude_agent_sdk import (
 from pipecat.frames.frames import (
     Frame,
     InterruptionFrame,
-    LLMFullResponseEndFrame,
-    LLMFullResponseStartFrame,
-    LLMTextFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
 )
@@ -23,12 +20,15 @@ from pipecat.utils.string import match_endofsentence
 from maia.voices import VOICES
 
 SYSTEM_PROMPT = (
-    "Eres Maia, una asistente de voz mujer en español, cálida y natural. "
-    "Responde con LO ESENCIAL, directo y conciso — nada de ensayos ni listas largas. "
-    "Otra capa reescribirá tu respuesta para hablarla, así que no te preocupes por el formato, "
-    "pero sé breve y ve al grano. No incluyas URLs ni bloques de fuentes con enlaces; si citas una "
-    "fuente, basta el nombre del sitio. "
-    "Puedes cambiar tu propia voz entre 'chica' y 'joven' con la herramienta set_voice si te lo piden."
+    "Eres Maia, asistente de voz mujer en español, cálida, natural y RESUELTA. "
+    "Es una conversación HABLADA: sé breve y directo. "
+    "REGLA CLAVE: NO hagas preguntas aclaratorias salvo que sea imprescindible. Si algo es "
+    "ambiguo, ASUME lo más razonable y ACTÚA de inmediato (usa tus herramientas, busca, resuelve). "
+    "El usuario quiere resultados y decisión, no un interrogatorio. Nunca respondas con una pregunta "
+    "cuando puedes simplemente hacer la tarea. "
+    "Responde con lo esencial. Otra capa reescribirá tu respuesta para hablarla, así que no te "
+    "preocupes por el formato, pero sé conciso. No incluyas URLs ni fuentes con enlaces. "
+    "Puedes cambiar tu voz entre 'chica' y 'joven' con set_voice si te lo piden."
 )
 
 HEARTBEAT_EVERY = 5.0  # s: aviso de progreso (dinámico, generado por Gemini) si Claude tarda
@@ -90,16 +90,14 @@ class MaiaBrain(FrameProcessor):
             pass
 
     async def _handle_turn(self, user_text: str):
-        await self.push_frame(LLMFullResponseStartFrame())
         needs_claude = True
         if self._reflex is not None:
             # Reflejo instantáneo (~0.5s): responde directo o da un relleno + delega.
             reply, needs_claude = await self._reflex.respond(user_text)
             if reply.strip():
-                await self.push_frame(LLMTextFrame(reply))
+                await self.push_frame(TTSSpeakFrame(reply))
         if needs_claude:
             await self._run_claude(user_text)
-        await self.push_frame(LLMFullResponseEndFrame())
 
     async def _run_claude(self, user_text: str):
         # Recolecta la respuesta completa de Claude (con heartbeat para no dejar silencio),
@@ -118,7 +116,7 @@ class MaiaBrain(FrameProcessor):
                         else "Sigo en ello."
                     )
                     if not done["v"]:
-                        await self.push_frame(LLMTextFrame(phrase))
+                        await self.push_frame(TTSSpeakFrame(phrase))
             except asyncio.CancelledError:
                 pass
 
@@ -141,11 +139,13 @@ class MaiaBrain(FrameProcessor):
         rest = spoken
         idx = match_endofsentence(rest)
         while idx:
-            await self.push_frame(LLMTextFrame(rest[:idx]))
+            frag = rest[:idx].strip()
+            if frag:
+                await self.push_frame(TTSSpeakFrame(frag))
             rest = rest[idx:]
             idx = match_endofsentence(rest)
         if rest.strip():
-            await self.push_frame(LLMTextFrame(rest))
+            await self.push_frame(TTSSpeakFrame(rest.strip()))
 
 
 def build_claude_options(mcp_servers=None, allowed_tools=None) -> ClaudeAgentOptions:
