@@ -1,7 +1,7 @@
 import asyncio
 
 from claude_agent_sdk import ClaudeSDKClient, ResultMessage
-from pipecat.frames.frames import TTSUpdateSettingsFrame
+from pipecat.frames.frames import TTSSpeakFrame, TTSUpdateSettingsFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -9,7 +9,7 @@ from pipecat.services.fish.tts import FishAudioTTSService
 
 from maia import config, services
 from maia.audio_out import ResampleOut
-from maia.brain import MaiaBrain, build_claude_options, make_voice_server
+from maia.brain import MaiaBrain, build_claude_options, make_timer_server, make_voice_server
 from maia.clean import SpeechCleaner
 from maia.reflex import Reflex
 
@@ -36,10 +36,15 @@ async def main():
                 TTSUpdateSettingsFrame(delta=FishAudioTTSService.Settings(voice=reference_id))
             )
 
+    async def fire_timer(message):
+        if holder["task"] is not None:
+            await holder["task"].queue_frame(TTSSpeakFrame(f"Oye, recordatorio: {message}"))
+
     voice_server = make_voice_server(switch_voice)
+    timer_server = make_timer_server(fire_timer)
     options = build_claude_options(
-        mcp_servers={"voz": voice_server},
-        allowed_tools=["mcp__voz__set_voice"],
+        mcp_servers={"voz": voice_server, "timers": timer_server},
+        allowed_tools=["mcp__voz__set_voice", "mcp__timers__set_timer"],
     )
 
     async with ClaudeSDKClient(options=options) as claude:

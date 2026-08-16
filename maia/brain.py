@@ -28,10 +28,33 @@ SYSTEM_PROMPT = (
     "cuando puedes simplemente hacer la tarea. "
     "Responde con lo esencial. Otra capa reescribirá tu respuesta para hablarla, así que no te "
     "preocupes por el formato, pero sé conciso. No incluyas URLs ni fuentes con enlaces. "
-    "Puedes cambiar tu voz entre 'chica' y 'joven' con set_voice si te lo piden."
+    "Puedes cambiar tu voz entre 'chica' y 'joven' con set_voice si te lo piden. "
+    "Puedes poner recordatorios/timers con set_timer (segundos + mensaje); convierte minutos a segundos."
 )
 
 HEARTBEAT_EVERY = 5.0  # s: aviso de progreso (dinámico, generado por Gemini) si Claude tarda
+
+
+def make_timer_server(fire_cb):
+    """Tool de timers/recordatorios in-process. fire_cb(message) se llama al vencer."""
+    _tasks = set()
+
+    @tool("set_timer", "Programa un recordatorio hablado dentro de N segundos.",
+          {"seconds": float, "message": str})
+    async def set_timer(args):
+        secs = float(args.get("seconds", 0))
+        msg = str(args.get("message", "")).strip() or "tu recordatorio"
+
+        async def _fire():
+            await asyncio.sleep(secs)
+            await fire_cb(msg)
+
+        t = asyncio.create_task(_fire())
+        _tasks.add(t)
+        t.add_done_callback(_tasks.discard)
+        return {"content": [{"type": "text", "text": f"Listo, te aviso en {int(secs)} segundos: {msg}"}]}
+
+    return create_sdk_mcp_server(name="timers", version="1.0.0", tools=[set_timer])
 
 
 def make_voice_server(switch_cb):
