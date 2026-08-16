@@ -354,6 +354,7 @@ def build_claude_options(mcp_servers=None, allowed_tools=None, plugins=None,
         system_prompt=SYSTEM_PROMPT,
         strict_mcp_config=True,   # SOLO nuestros mcp_servers; ignora connectors claude.ai + config global
         setting_sources=[],       # modo aislado: no hereda ~/.claude ni proyecto
+        max_buffer_size=20 * 1024 * 1024,  # headroom: capturas/salidas grandes no revientan el lector (default 1MB)
     )
     if mcp_servers:
         kwargs["mcp_servers"] = mcp_servers

@@ -20,11 +20,16 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 pyautogui.FAILSAFE = True  # mover el mouse a una esquina aborta (freno de emergencia)
 pyautogui.PAUSE = 0.05
 
-SHOT_WIDTH = 1280  # ancho al que reescalamos la captura enviada a Claude
+SHOT_WIDTH = 1280      # ancho al que reescalamos la captura enviada a Claude
+MAX_JPEG_BYTES = 600_000  # tope duro (~800KB en base64) para no reventar el buffer de 1MB del SDK
 
 
 def _capture(state: dict):
-    """Captura la pantalla primaria, la reescala y actualiza el factor de escala."""
+    """Captura la pantalla primaria, la reescala y la codifica como JPEG (pequeño).
+
+    Devuelve JPEG y no PNG porque un PNG de una pantalla densa puede pasar de 1MB y
+    reventar el buffer del SDK; JPEG q85 pesa ~10x menos y la vista lo lee bien.
+    """
     with mss() as sct:
         mon = sct.monitors[1]  # monitor primario
         raw = sct.grab(mon)
@@ -37,9 +42,15 @@ def _capture(state: dict):
     state["sy"] = real_h / th
     state["real"] = (real_w, real_h)
     state["shot"] = (tw, th)
-    buf = io.BytesIO()
-    small.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode(), tw, th, real_w, real_h
+    # Baja calidad de forma adaptativa hasta quedar bajo el tope (casi nunca hace falta).
+    data = b""
+    for q in (85, 70, 55, 40):
+        buf = io.BytesIO()
+        small.save(buf, format="JPEG", quality=q)
+        data = buf.getvalue()
+        if len(data) <= MAX_JPEG_BYTES:
+            break
+    return base64.b64encode(data).decode(), tw, th, real_w, real_h
 
 
 def _shot_result(state: dict, note: str = ""):
@@ -48,7 +59,7 @@ def _shot_result(state: dict, note: str = ""):
     if note:
         text = note + " " + text
     return {"content": [
-        {"type": "image", "data": b64, "mimeType": "image/png"},
+        {"type": "image", "data": b64, "mimeType": "image/jpeg"},
         {"type": "text", "text": text},
     ]}
 
