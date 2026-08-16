@@ -150,7 +150,47 @@ def _log_tools(message) -> None:
             for b in content:
                 if isinstance(b, ToolResultBlock):
                     mark = "ERR" if b.is_error else "OK"
-                    print(f"[TOOL {mark}] {_short(b.content)}", flush=True)
+                    print(f"[TOOL {mark}] {_short(_result_text(b))}", flush=True)
+
+
+def _result_text(block) -> str:
+    """Texto legible del resultado de una tool, SIN datos de imagen (base64)."""
+    c = block.content
+    if c is None:
+        return "error" if block.is_error else "ok"
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        parts = []
+        for it in c:
+            if isinstance(it, dict):
+                if it.get("type") == "text":
+                    parts.append(str(it.get("text", "")))
+                elif it.get("type") == "image":
+                    parts.append("(captura de pantalla)")
+        return " ".join(parts) if parts else "ok"
+    return str(c)
+
+
+def _activity_events(message) -> list[str]:
+    """Eventos compactos (tool + resultado) para que Gemini narre lo que Claude hace.
+
+    Nunca incluye datos de imagen; solo nombres, inputs cortos y texto de resultados.
+    """
+    events = []
+    if isinstance(message, AssistantMessage):
+        for b in message.content:
+            if isinstance(b, ToolUseBlock):
+                name = b.name.replace("mcp__", "").replace("__", ".")
+                events.append(f"[usó {name}: {_short(b.input, 120)}]")
+    elif isinstance(message, UserMessage):
+        content = getattr(message, "content", None)
+        if isinstance(content, list):
+            for b in content:
+                if isinstance(b, ToolResultBlock):
+                    mark = "error" if b.is_error else "resultado"
+                    events.append(f"[{mark}: {_short(_result_text(b), 220)}]")
+    return events
 
 
 class MaiaBrain(FrameProcessor):
@@ -207,10 +247,11 @@ class MaiaBrain(FrameProcessor):
             await self._run_claude(user_text)
 
     async def _run_claude(self, user_text: str):
-        # Recolecta la respuesta completa de Claude (con heartbeat basado en su progreso real),
-        # luego Gemini la humaniza (corta, sin URLs/markdown/siglas) y la hablamos.
+        # Recolecta lo que hace Claude (texto Y acciones de herramientas) y Gemini lo
+        # interpreta/narra — clave cuando Claude entra en modo agéntico y casi solo
+        # ejecuta tools sin escribir texto.
         done = {"v": False}
-        progress = {"buf": ""}  # progreso parcial de Claude, para avisos contextuales
+        progress = {"log": ""}  # traza (texto + tools) para avisos contextuales
 
         async def heartbeat():
             try:
@@ -219,7 +260,7 @@ class MaiaBrain(FrameProcessor):
                     if done["v"]:
                         break
                     phrase = (
-                        await self._reflex.progress_update(user_text, progress["buf"])
+                        await self._reflex.progress_update(user_text, progress["log"])
                         if self._reflex is not None
                         else "Sigo en ello."
                     )
@@ -230,6 +271,7 @@ class MaiaBrain(FrameProcessor):
 
         hb = self.create_task(heartbeat())
         buf = ""
+        activity = []  # traza cronológica: frases de Claude + [usó tool]/[resultado]
         pending = ""  # para loguear a Claude en tiempo real, frase por frase
         claude_failed = False
         self._claude_running = True
@@ -243,19 +285,22 @@ class MaiaBrain(FrameProcessor):
                     pass
             await self._claude.query(user_text)
             async for message in self._claude.receive_response():
-                _log_tools(message)  # [TOOL→]/[TOOL✓]: qué ejecuta Claude
+                _log_tools(message)  # [TOOL >]/[TOOL OK]: qué ejecuta Claude
+                for ev in _activity_events(message):  # tools + resultados (sin imágenes)
+                    activity.append(ev)
                 delta = _delta_text(message)
                 if delta:
                     buf += delta
-                    progress["buf"] = buf  # expone el progreso al heartbeat
                     pending += delta
                     idx = match_endofsentence(pending)
                     while idx:
                         frag = pending[:idx].strip()
                         if frag:
                             print(f"[CLAUDE] {frag}", flush=True)
+                            activity.append(frag)
                         pending = pending[idx:]
                         idx = match_endofsentence(pending)
+                progress["log"] = "\n".join(activity)  # expone texto+tools al heartbeat
                 if isinstance(message, ResultMessage):
                     break
         except asyncio.CancelledError:
@@ -269,6 +314,7 @@ class MaiaBrain(FrameProcessor):
             await self.cancel_task(hb)
         if pending.strip():
             print(f"[CLAUDE] {pending.strip()}", flush=True)
+            activity.append(pending.strip())
 
         if claude_failed:
             spoken = (
@@ -278,9 +324,15 @@ class MaiaBrain(FrameProcessor):
             )
         else:
             raw = buf.strip()
-            if not raw:
-                return
-            spoken = await self._reflex.humanize(raw) if self._reflex is not None else raw
+            trace = "\n".join(activity).strip()
+            if not raw and not trace:
+                return  # Claude no hizo ni dijo nada
+            if self._reflex is not None:
+                # Gemini interpreta lo que Claude HIZO (texto + tools), no solo su texto.
+                # Así, aunque Claude solo ejecute herramientas, Maia narra el resultado.
+                spoken = await self._reflex.speak_result(user_text, raw, trace)
+            else:
+                spoken = raw or "Listo."
         rest = spoken
         idx = match_endofsentence(rest)
         while idx:

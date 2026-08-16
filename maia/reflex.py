@@ -94,6 +94,35 @@ class Reflex:
         except Exception:
             return "Perdona, ahora mismo no puedo responder."
 
+    async def speak_result(self, user_text: str, claude_text: str, activity: str) -> str:
+        """Narra el RESULTADO de un turno agéntico interpretando texto + acciones de tools.
+
+        Clave cuando Claude casi no escribe texto y solo ejecuta herramientas: en vez de
+        quedarse callada, Maia dice qué hizo y qué encontró/pasó.
+        """
+        try:
+            r = await self._client.aio.models.generate_content(
+                model=self._model,
+                contents=(
+                    PERSONA
+                    + f'\n\nEl usuario pidió: "{user_text}".\n'
+                    "Esto es TODO lo que hiciste en este turno: tus frases y las herramientas "
+                    "que ejecutaste con sus resultados (en orden). Las capturas de pantalla se "
+                    "marcan como '(captura de pantalla)'.\n---\n"
+                    f"{activity[-3500:]}\n---\n"
+                    f'Texto final que redactaste (puede estar vacío o incompleto): "{claude_text[-800:]}"\n\n'
+                    "Dile al usuario, HABLANDO en español, en 1 a 3 frases cortas, el RESULTADO: "
+                    "qué hiciste y qué encontraste o pasó. Si completaste la acción, dilo natural "
+                    "('Listo, ya…', 'Hecho', 'Encontré…'). Si el texto final ya lo resume, básate "
+                    "en él. Usa SOLO lo que aparece arriba, no inventes. Sin markdown, sin URLs, "
+                    "sin deletrear siglas. Solo la respuesta hablada."
+                ),
+            )
+            txt = (r.text or "").strip()
+            return txt or (claude_text.strip() or "Listo.")
+        except Exception:
+            return claude_text.strip() or "Listo, ya lo hice."
+
     async def humanize(self, raw: str) -> str:
         """Reescribe la salida cruda de Claude en una respuesta hablada, corta y limpia."""
         try:
