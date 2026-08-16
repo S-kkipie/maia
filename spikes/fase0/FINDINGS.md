@@ -18,24 +18,24 @@ Cada tarea registra: fecha, veredicto (PASS/FALLA/PARCIAL), métricas y notas.
 - Fallback de token para always-on (documentado, no ejecutado): para despliegue headless sin login interactivo, `claude setup-token` genera un `CLAUDE_CODE_OAUTH_TOKEN` de larga duración (1 año) que se exporta en el entorno y tiene precedencia sobre el login interactivo vía `credentials.json`. Marcado como "pendiente de probar en despliegue always-on".
 
 ## Task 4 — Audio WASAPI
-- Veredicto:
-- Host API elegido / device in/out:
-- ¿Echo audible sin XRuns?:
-- Notas:
+- Veredicto: PARCIAL/FALLA — mecánica de dispositivo OK, pero loopback a 16 kHz FALLA. (Ejecutado por el controlador 2026-08-15.)
+- Host API elegido / device in/out: WASAPI `host_api=2`; IN idx 36 (Headset Microphone DualSense, rate nativo **48000 Hz**), OUT idx 26 (Speakers Realtek, nativo **48000 Hz**). Enumeración WASAPI correcta.
+- ¿Echo audible sin XRuns?: NO. Loopback a 16000 Hz falla con `[Errno -9997] Invalid sample rate` en input Y output (pyaudio/WASAPI). Audio Duration=0.0s, no capturó ni reprodujo.
+- Notas: WASAPI en modo compartido en este equipo exige el rate **nativo (48000 Hz)**; 16000 Hz no lo acepta el mic ni el speaker cuando se pasa `input_device_index`/`output_device_index` explícito. **FIX v1:** capturar/reproducir a 48000 (nativo) y resamplear a 16k para el STT (o dejar que Pipecat resamplee), en vez de forzar 16000 en `LocalAudioTransportParams`. Matiz: en el spike 05 (solo output, SIN device index explícito) el TTS a 16k SÍ sonó — el fallo aparece con device index explícito y/o en la entrada. §8b.3: WASAPI funciona, pero solo a rate nativo — riesgo real materializado, con fix claro.
 
 ## Task 5 — STT AssemblyAI español
-- Veredicto:
-- Modelo / language_codes:
-- ¿Español transcrito con precisión en streaming?:
-- Latencia final aprox (s):
-- Notas:
+- Veredicto: PARCIAL — servicio/español VALIDADO a nivel de conexión; transcripción real bloqueada por la entrada de audio. (Ejecutado por el controlador 2026-08-15.)
+- Modelo / language_codes: `universal-3-5-pro` / `[Language.ES]`, `vad_force_turn_endpoint=False`. AssemblyAI aceptó la conexión y el modelo **sin error de auth ni de entitlement**.
+- ¿Español transcrito con precisión en streaming?: NO PROBADO aún — el mic a 16000 Hz falló (`Invalid sample rate`, ver Task 4), Audio Duration=0.0s, así que **no llegó audio** al STT. La CONEXIÓN sí se estableció ("Connected to AssemblyAI WebSocket", "Session Begin", 20s limpios), lo que valida la key + el modelo español streaming del lado del servicio. Falta capturar voz real (requiere fix sample-rate 48k + usuario hablando).
+- Latencia final aprox (s): N/D (sin audio capturado).
+- Notas: Key de AssemblyAI válida y con permiso de streaming. Riesgo "español streaming" resuelto a nivel de aceptación de modelo/conexión; la CALIDAD real queda pendiente tras arreglar la entrada de audio (mismo `Invalid sample rate` a 16 kHz de Task 4 — bloqueante compartido).
 
 ## Task 6 — Latencia E2E (TTFA)
-- Veredicto:
-- TTFA total (query→primer audio) (s):
-- Pipecat TTFA(TTS) / TTFB (s):
-- ¿< 1.5 s?:
-- Notas:
+- Veredicto: FALLA vs objetivo <1.5s para la RESPUESTA; cliente persistente CONFIRMADO imprescindible. (Ejecutado por el controlador 2026-08-15.)
+- TTFA total (query→primer audio) (s): **6.922s** con CLIENTE NUEVO (cold, como está escrito el spike). El cuello es el cerebro, no el TTS.
+- Pipecat TTFA(TTS) / TTFB (s): **0.514s / 0.489s** (ElevenLabs Flash v2.5 rapidísimo — NO es el bottleneck).
+- ¿< 1.5 s?: NO para la respuesta. Sonda extra (cliente persistente): COLD TTFT=**18.9s** (1er turno), WARM TTFT=**1.79 / 1.79 / 1.34s** (~1.6s al primer token). ⇒ TTFA de respuesta warm ≈ **~2-2.5s** (frase ~1.6s + TTS 0.5s).
+- Notas: (1) Cold-start del SDK catastrófico (~19s) → CONFIRMA que el cliente persistente warm es obligatorio (decisión #1 del diseño). (2) Ni warm se alcanza <1.5s para la respuesta; el <1.5s "primera sílaba" solo es alcanzable vía **RELLENO HABLADO** (hablar "dame un segundo…" al instante mientras el cerebro genera) — mecanismo de v1 NO probado aquí. (3) TTS no es el problema (0.5s). (4) BUG de encoding: prints con "→"/español CRASHEAN en consola Windows (cp1252) salvo con `PYTHONUTF8=1` — por eso el 1er run no imprimió la línea TTFA total. Setear UTF-8 en v1.
 
 ## Task 7 — MCP local configurado
 - Veredicto: PASS
