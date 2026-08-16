@@ -1,10 +1,14 @@
 import asyncio
 
 from claude_agent_sdk import (
+    AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
     ResultMessage,
     StreamEvent,
+    ToolResultBlock,
+    ToolUseBlock,
+    UserMessage,
     create_sdk_mcp_server,
     tool,
 )
@@ -113,12 +117,42 @@ def _delta_text(message) -> str:
     return ""
 
 
+def _short(value, n: int = 160) -> str:
+    """Compacta el input/output de una tool a una línea corta para el log."""
+    import json
+
+    try:
+        s = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    except Exception:
+        s = str(value)
+    s = " ".join(s.split())
+    return s if len(s) <= n else s[:n] + "..."
+
+
+def _log_tools(message) -> None:
+    """Muestra en consola qué herramientas ejecuta Claude y sus resultados."""
+    if isinstance(message, AssistantMessage):
+        for b in message.content:
+            if isinstance(b, ToolUseBlock):
+                name = b.name.replace("mcp__", "").replace("__", ".")
+                print(f"[TOOL >] {name}  {_short(b.input)}", flush=True)
+    elif isinstance(message, UserMessage):
+        content = getattr(message, "content", None)
+        if isinstance(content, list):
+            for b in content:
+                if isinstance(b, ToolResultBlock):
+                    mark = "ERR" if b.is_error else "OK"
+                    print(f"[TOOL {mark}] {_short(b.content)}", flush=True)
+
+
 class MaiaBrain(FrameProcessor):
     def __init__(self, claude: ClaudeSDKClient, reflex=None, **kwargs):
         super().__init__(**kwargs)
         self._claude = claude
         self._reflex = reflex  # capa Gemini rápida; si None, todo va a Claude
         self._gen_task = None
+        self._claude_running = False   # True mientras Claude procesa un turno
+        self._interrupt_task = None    # interrupt() en 2do plano (nunca bloquea el pipeline)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -133,13 +167,26 @@ class MaiaBrain(FrameProcessor):
             await self.push_frame(frame, direction)
 
     async def _abort(self):
+        was_running = self._claude_running
+        # Cancela la generación local en curso (acotado y rápido).
         if self._gen_task:
             await self.cancel_task(self._gen_task)
             self._gen_task = None
+        # Interrumpe a Claude SÓLO si había un turno activo, y SIEMPRE en segundo
+        # plano: interrupt() espera el ack del CLI hasta 60s, y hacerlo aquí en
+        # medio de una tool larga (p.ej. navegador) congelaba TODO el pipeline
+        # (dejaba de transcribir y de responder). Nunca lo esperamos en el hilo
+        # de frames.
+        if was_running and self._interrupt_task is None:
+            self._interrupt_task = self.create_task(self._interrupt_claude())
+
+    async def _interrupt_claude(self):
         try:
-            await self._claude.interrupt()
+            await asyncio.wait_for(self._claude.interrupt(), timeout=5.0)
         except Exception:
             pass
+        finally:
+            self._interrupt_task = None
 
     async def _handle_turn(self, user_text: str):
         needs_claude = True
@@ -177,9 +224,18 @@ class MaiaBrain(FrameProcessor):
         buf = ""
         pending = ""  # para loguear a Claude en tiempo real, frase por frase
         claude_failed = False
+        self._claude_running = True
         try:
+            # Si quedó un interrupt del turno anterior en vuelo, deja que aterrice
+            # antes de lanzar esta query (evita solapar turnos en el CLI).
+            if self._interrupt_task is not None:
+                try:
+                    await asyncio.wait_for(asyncio.shield(self._interrupt_task), timeout=5.0)
+                except Exception:
+                    pass
             await self._claude.query(user_text)
             async for message in self._claude.receive_response():
+                _log_tools(message)  # [TOOL→]/[TOOL✓]: qué ejecuta Claude
                 delta = _delta_text(message)
                 if delta:
                     buf += delta
@@ -194,11 +250,14 @@ class MaiaBrain(FrameProcessor):
                         idx = match_endofsentence(pending)
                 if isinstance(message, ResultMessage):
                     break
+        except asyncio.CancelledError:
+            raise  # turno cancelado por barge-in: propaga limpio (no hables)
         except Exception as e:  # Claude no disponible -> fallback a Gemini
             print(f"[FALLBACK] Claude no disponible: {e}", flush=True)
             claude_failed = True
         finally:
             done["v"] = True
+            self._claude_running = False
             await self.cancel_task(hb)
         if pending.strip():
             print(f"[CLAUDE] {pending.strip()}", flush=True)
