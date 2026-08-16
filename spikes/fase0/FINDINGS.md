@@ -10,11 +10,12 @@ Cada tarea registra: fecha, veredicto (PASS/FALLA/PARCIAL), métricas y notas.
 - Notas: `permission_mode="bypassPermissions"` funcionó tal cual está escrito en el brief — no lanzó excepción y el turno 1 no se bloqueó pidiendo permiso interactivo (corrió headless dentro del timeout acotado de 120s, terminó en ~8s). Conectó sin `ANTHROPIC_API_KEY` (guard de `_env.py` confirma que no está seteada), usando la suscripción vía `~/.claude/.credentials.json`. Esto resuelve el riesgo §8b.1: el SDK sí puede correr Bash no interactivo en Windows con `bypassPermissions`; el gate de confirmación real de v1 deberá construirse aparte (no viene gratis de un permission_mode distinto).
 
 ## Task 3 — Auth suscripción + límites
-- Veredicto:
-- subscriptionType / expiresAt vigente:
-- Turnos OK de 20 / errores:
-- Latencia media (s):
-- Notas (rate-limit observado):
+- Veredicto: PASS
+- subscriptionType: `max` / rateLimitTier: `default_claude_max_5x` / accessToken vigente: `True`
+- Turnos OK de 20 / errores: 20/20 OK, 0 errores
+- Latencia media (s): 1.698s
+- Notas (rate-limit observado): Sin errores de auth ni de rate-limit en las 20 llamadas secuenciales (ráfaga corta, modelo `claude-haiku-4-5-20251001`). El SDK corrió headless enteramente por suscripción (`~/.claude/.credentials.json`), sin `ANTHROPIC_API_KEY` seteada (guard de `_env.py` lo confirma). Resuelve §8b.2 para el caso de ráfaga corta: no se observó throttling con `default_claude_max_5x`. Queda pendiente un sondeo de uso sostenido/prolongado (always-on real) para confirmar límites diarios/horarios, que esta prueba de 20 turnos cortos no cubre.
+- Fallback de token para always-on (documentado, no ejecutado): para despliegue headless sin login interactivo, `claude setup-token` genera un `CLAUDE_CODE_OAUTH_TOKEN` de larga duración (1 año) que se exporta en el entorno y tiene precedencia sobre el login interactivo vía `credentials.json`. Marcado como "pendiente de probar en despliegue always-on".
 
 ## Task 4 — Audio WASAPI
 - Veredicto:
