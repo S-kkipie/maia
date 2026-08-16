@@ -10,6 +10,7 @@ from pipecat.services.fish.tts import FishAudioTTSService
 from maia import config, services
 from maia.audio_out import ResampleOut
 from maia.brain import MaiaBrain, build_claude_options, make_voice_server
+from maia.reflex import Reflex
 
 
 async def _warmup(claude: ClaudeSDKClient):
@@ -23,6 +24,7 @@ async def _warmup(claude: ClaudeSDKClient):
 async def main():
     cfg = config.load()
     transport = services.build_transport(cfg)
+    reflex = Reflex(cfg.gemini_key, cfg.reflex_model) if cfg.gemini_key else None
 
     # Callback para cambiar la voz en vivo: empuja un TTSUpdateSettingsFrame al pipeline.
     holder = {"task": None}
@@ -45,7 +47,7 @@ async def main():
         pipeline = Pipeline([
             transport.input(),
             services.build_stt(cfg),
-            MaiaBrain(claude),
+            MaiaBrain(claude, reflex),
             services.build_tts(cfg),
             ResampleOut(),  # Fish 24k -> 48k antes del transport (fix del chipmunk)
             transport.output(),

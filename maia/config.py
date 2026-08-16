@@ -58,6 +58,8 @@ class Config:
     output_device_index: int
     picovoice_key: str | None
     wake_ppn: str | None
+    gemini_key: str | None
+    reflex_model: str
 
 
 def load() -> Config:
@@ -69,6 +71,8 @@ def load() -> Config:
         output_device_index=_pick_wasapi_device(False, os.getenv("MAIA_OUTPUT_DEVICE")),
         picovoice_key=os.getenv("PICOVOICE_ACCESS_KEY") or None,
         wake_ppn=os.getenv("MAIA_WAKE_PPN") or None,
+        gemini_key=os.getenv("GEMINI_API_KEY") or None,
+        reflex_model=os.getenv("MAIA_REFLEX_MODEL") or "gemini-2.5-flash-lite",
     )
 
 

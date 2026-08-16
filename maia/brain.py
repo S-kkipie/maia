@@ -36,9 +36,6 @@ SYSTEM_PROMPT = (
     "Cada aviso: una frase corta y natural."
 )
 
-FILLER_DELAY = 1.3  # s: solo suena el relleno si el cerebro tarda más que esto
-FILLER_TEXT = "Mmm, déjame ver."
-
 
 def make_voice_server(switch_cb):
     """Tool para que Maia cambie su voz en vivo. switch_cb(reference_id) -> None."""
@@ -68,9 +65,10 @@ def _delta_text(message) -> str:
 
 
 class MaiaBrain(FrameProcessor):
-    def __init__(self, claude: ClaudeSDKClient, **kwargs):
+    def __init__(self, claude: ClaudeSDKClient, reflex=None, **kwargs):
         super().__init__(**kwargs)
         self._claude = claude
+        self._reflex = reflex  # capa Gemini rápida; si None, todo va a Claude
         self._gen_task = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -80,7 +78,7 @@ class MaiaBrain(FrameProcessor):
             await self.push_frame(frame, direction)
         elif isinstance(frame, TranscriptionFrame) and frame.text.strip():
             await self._abort()
-            self._gen_task = self.create_task(self._run_brain(frame.text))
+            self._gen_task = self.create_task(self._handle_turn(frame.text))
         else:
             await self.push_frame(frame, direction)
 
@@ -93,42 +91,32 @@ class MaiaBrain(FrameProcessor):
         except Exception:
             pass
 
-    async def _run_brain(self, user_text: str):
+    async def _handle_turn(self, user_text: str):
         await self.push_frame(LLMFullResponseStartFrame())
-        spoke = {"v": False}
+        needs_claude = True
+        if self._reflex is not None:
+            # Reflejo instantáneo (~0.5s): responde directo o da un relleno + delega.
+            reply, needs_claude = await self._reflex.respond(user_text)
+            if reply.strip():
+                await self.push_frame(LLMTextFrame(reply))
+        if needs_claude:
+            await self._stream_claude(user_text)
+        await self.push_frame(LLMFullResponseEndFrame())
 
-        async def delayed_filler():
-            try:
-                await asyncio.sleep(FILLER_DELAY)
-                if not spoke["v"]:
-                    await self.push_frame(TTSSpeakFrame(FILLER_TEXT))
-            except asyncio.CancelledError:
-                pass
-
-        filler = self.create_task(delayed_filler())
-
-        async def say(sentence: str):
-            if not spoke["v"]:
-                spoke["v"] = True
-                await self.cancel_task(filler)  # llegó respuesta a tiempo -> sin relleno
-            await self.push_frame(LLMTextFrame(sentence))
-
+    async def _stream_claude(self, user_text: str):
         buf = ""
         await self._claude.query(user_text)
         async for message in self._claude.receive_response():
             buf += _delta_text(message)
             idx = match_endofsentence(buf)
             while idx:
-                await say(buf[:idx])
+                await self.push_frame(LLMTextFrame(buf[:idx]))
                 buf = buf[idx:]
                 idx = match_endofsentence(buf)
             if isinstance(message, ResultMessage):
                 break
         if buf.strip():
-            await say(buf)
-        if not spoke["v"]:
-            await self.cancel_task(filler)
-        await self.push_frame(LLMFullResponseEndFrame())
+            await self.push_frame(LLMTextFrame(buf))
 
 
 def build_claude_options(mcp_servers=None, allowed_tools=None) -> ClaudeAgentOptions:
