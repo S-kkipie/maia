@@ -29,7 +29,9 @@ SYSTEM_PROMPT = (
     "Responde con lo esencial. Otra capa reescribirá tu respuesta para hablarla, así que no te "
     "preocupes por el formato, pero sé conciso. No incluyas URLs ni fuentes con enlaces. "
     "Puedes cambiar tu voz entre 'chica' y 'joven' con set_voice si te lo piden. "
-    "Puedes poner recordatorios/timers con set_timer (segundos + mensaje); convierte minutos a segundos."
+    "Puedes poner recordatorios/timers con set_timer (segundos + mensaje); convierte minutos a segundos. "
+    "Tienes navegador (Playwright) además de Bash y web. Si el usuario te pide una capacidad que no tienes, "
+    "puedes agregarte un MCP nuevo con agregar_mcp (aplica cuando te reinicien)."
 )
 
 HEARTBEAT_EVERY = 5.0  # s: aviso de progreso (dinámico, generado por Gemini) si Claude tarda
@@ -55,6 +57,32 @@ def make_timer_server(fire_cb):
         return {"content": [{"type": "text", "text": f"Listo, te aviso en {int(secs)} segundos: {msg}"}]}
 
     return create_sdk_mcp_server(name="timers", version="1.0.0", tools=[set_timer])
+
+
+def make_config_server():
+    """Tool para que Maia se agregue MCPs nuevos (auto-extensión). Aplica al reiniciar."""
+    import shlex
+
+    @tool(
+        "agregar_mcp",
+        "Agrega un servidor MCP local nuevo a Maia. nombre: identificador corto; "
+        "comando: ejecutable (por ejemplo 'npx'); args: argumentos separados por espacios.",
+        {"nombre": str, "comando": str, "args": str},
+    )
+    async def agregar_mcp(a):
+        from maia import mcps
+
+        name = str(a.get("nombre", "")).strip()
+        cmd = str(a.get("comando", "")).strip()
+        arglist = shlex.split(str(a.get("args", "")))
+        if not name or not cmd:
+            return {"content": [{"type": "text", "text": "Necesito al menos nombre y comando."}],
+                    "is_error": True}
+        mcps.add_mcp(name, cmd, arglist)
+        return {"content": [{"type": "text",
+                             "text": f"Listo, agregué el MCP {name}. Lo tendré disponible la próxima vez que me reinicies."}]}
+
+    return create_sdk_mcp_server(name="config", version="1.0.0", tools=[agregar_mcp])
 
 
 def make_voice_server(switch_cb):

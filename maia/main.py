@@ -9,7 +9,13 @@ from pipecat.services.fish.tts import FishAudioTTSService
 
 from maia import config, mcps, services
 from maia.audio_out import ResampleOut
-from maia.brain import MaiaBrain, build_claude_options, make_timer_server, make_voice_server
+from maia.brain import (
+    MaiaBrain,
+    build_claude_options,
+    make_config_server,
+    make_timer_server,
+    make_voice_server,
+)
 from maia.clean import SpeechCleaner
 from maia.reflex import Reflex
 
@@ -43,7 +49,12 @@ async def main():
     voice_server = make_voice_server(switch_voice)
     timer_server = make_timer_server(fire_timer)
     # in-process (voz, timers) + MCPs externos del registro (playwright/browser, etc.)
-    servers = {"voz": voice_server, "timers": timer_server, **mcps.load_registry()}
+    servers = {
+        "voz": voice_server,
+        "timers": timer_server,
+        "config": make_config_server(),
+        **mcps.load_registry(),
+    }
     options = build_claude_options(
         mcp_servers=servers,
         allowed_tools=mcps.allowed_tools_for(servers.keys()),
