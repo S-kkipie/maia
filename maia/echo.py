@@ -7,6 +7,7 @@ from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from maia import config, services
+from maia.audio_out import ResampleOut
 
 
 class EchoBrain(FrameProcessor):
@@ -29,9 +30,11 @@ async def main():
         services.build_stt(cfg),
         EchoBrain(),
         services.build_tts(cfg),
+        ResampleOut(),
         transport.output(),
     ])
-    task = PipelineTask(pipeline, params=PipelineParams(enable_metrics=True))
+    task = PipelineTask(pipeline, params=PipelineParams(
+        audio_in_sample_rate=48000, audio_out_sample_rate=48000, enable_metrics=True))
     print("Habla en espanol; Maia repetira. Ctrl-C para salir.")
     await PipelineRunner(handle_sigint=False).run(task)
 

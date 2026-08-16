@@ -3,8 +3,9 @@ from pipecat.services.fish.tts import FishAudioTTSService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 
-TRANSPORT_SR = 48000
-FISH_SR = 44100  # Fish máx en pcm; el output transport resamplea 44100->48000
+IN_SR = 48000    # mic WASAPI nativo (AssemblyAI a 48k)
+OUT_SR = 48000   # speaker Realtek nativo (solo acepta 48000 con índice explícito)
+FISH_SR = 24000  # Fish genera a 24k -> transport resamplea 24000->48000 (2x exacto, limpio)
 
 
 def build_transport(cfg) -> LocalAudioTransport:
@@ -12,8 +13,8 @@ def build_transport(cfg) -> LocalAudioTransport:
         LocalAudioTransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            audio_in_sample_rate=TRANSPORT_SR,
-            audio_out_sample_rate=TRANSPORT_SR,
+            audio_in_sample_rate=IN_SR,
+            audio_out_sample_rate=OUT_SR,
             input_device_index=cfg.input_device_index,
             output_device_index=cfg.output_device_index,
         )
@@ -23,7 +24,7 @@ def build_transport(cfg) -> LocalAudioTransport:
 def build_stt(cfg) -> AssemblyAISTTService:
     return AssemblyAISTTService(
         api_key=cfg.assemblyai_key,
-        sample_rate=TRANSPORT_SR,  # debe igualar el transport (input NO auto-resamplea)
+        sample_rate=IN_SR,  # debe igualar el transport de entrada (input NO auto-resamplea)
         vad_force_turn_endpoint=False,  # AssemblyAI maneja turnos + barge-in server-side
         settings=AssemblyAISTTService.Settings(
             model="universal-3-5-pro",

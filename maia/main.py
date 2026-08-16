@@ -6,6 +6,7 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 
 from maia import config, services
+from maia.audio_out import ResampleOut
 from maia.brain import MaiaBrain, build_claude_options
 
 
@@ -28,9 +29,11 @@ async def main():
             services.build_stt(cfg),
             MaiaBrain(claude),
             services.build_tts(cfg),
+            ResampleOut(),  # Fish 24k -> 48k antes del transport (fix del chipmunk)
             transport.output(),
         ])
-        task = PipelineTask(pipeline, params=PipelineParams(enable_metrics=True))
+        task = PipelineTask(pipeline, params=PipelineParams(
+            audio_in_sample_rate=48000, audio_out_sample_rate=48000, enable_metrics=True))
         print("Maia lista. Habla en español. Ctrl-C para salir.")
         await PipelineRunner(handle_sigint=False).run(task)
 
