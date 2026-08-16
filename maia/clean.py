@@ -5,7 +5,12 @@ loguea en consola lo que Maia va a decir ([MAIA]).
 """
 import re
 
-from pipecat.frames.frames import TextFrame, TTSSpeakFrame
+from pipecat.frames.frames import (
+    InterimTranscriptionFrame,
+    TextFrame,
+    TranscriptionFrame,
+    TTSSpeakFrame,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")       # [texto](url) -> texto
@@ -32,7 +37,10 @@ class SpeechCleaner(FrameProcessor):
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        if isinstance(frame, (TextFrame, TTSSpeakFrame)) and getattr(frame, "text", None):
+        # OJO: las transcripciones del usuario (Interim/Transcription) también son TextFrame;
+        # NO son voz de Maia, así que NO las tocamos ni logueamos como [MAIA].
+        is_user = isinstance(frame, (InterimTranscriptionFrame, TranscriptionFrame))
+        if not is_user and isinstance(frame, (TextFrame, TTSSpeakFrame)) and getattr(frame, "text", None):
             cleaned = clean_for_speech(frame.text)
             frame.text = cleaned
             if cleaned.strip():

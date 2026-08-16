@@ -122,15 +122,28 @@ class MaiaBrain(FrameProcessor):
 
         hb = self.create_task(heartbeat())
         buf = ""
+        pending = ""  # para loguear a Claude en tiempo real, frase por frase
         try:
             await self._claude.query(user_text)
             async for message in self._claude.receive_response():
-                buf += _delta_text(message)
+                delta = _delta_text(message)
+                if delta:
+                    buf += delta
+                    pending += delta
+                    idx = match_endofsentence(pending)
+                    while idx:
+                        frag = pending[:idx].strip()
+                        if frag:
+                            print(f"[CLAUDE] {frag}", flush=True)
+                        pending = pending[idx:]
+                        idx = match_endofsentence(pending)
                 if isinstance(message, ResultMessage):
                     break
         finally:
             done["v"] = True
             await self.cancel_task(hb)
+        if pending.strip():
+            print(f"[CLAUDE] {pending.strip()}", flush=True)
 
         raw = buf.strip()
         if not raw:
