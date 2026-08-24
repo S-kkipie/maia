@@ -29,3 +29,7 @@ Spec completo: [`docs/superpowers/specs/2026-08-15-maia-voice-assistant-design.m
 
 Primera sílaba hablada **<1.5s** por turno (streaming por frase + relleno hablado + sesión
 persistente sin cold-start).
+
+## Licencia
+
+[GNU AGPL-3.0-or-later](LICENSE) — © S-kippie.
